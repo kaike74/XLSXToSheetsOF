@@ -1,0 +1,304 @@
+// Configurações otimizadas e constantes
+const CONFIG = {
+  NOTION_TOKEN_1: 'ntn_v87800291735BWlhOaZu8Gejq7GrGUTRcUt8F3RVkya8CT',
+  notionUrl: 'https://api.notion.com/v1/pages',
+  fileId: "1qOq4CfEo_8u_hVvjfwc6SEVx_I7633ev",
+  destinationSheetId: "1PVCZffGKfni52DCYqVt4WMpSD8QdiZJooTE0BHuGrGc",
+  
+  // IDs dos bancos Notion por tipo
+  defaultDatabases: {
+    "Mídia Avulsa": {
+      databaseId: '12a20b549cf5802c870fe5abfe9e79c3',
+      pageId1: '13c20b549cf580d9b6f9db45cc07d2c5',
+      pageId2: '24220b549cf58012ac92ef310bbb4025'
+    },
+    "Patrocínio": {
+      databaseId: '17a20b549cf58149852fd434e8b61575',
+      pageId1: '17a20b549cf5809ba7c1d61e288844dd',
+      pageId2: '24720b549cf5800ea3c2f3eeabfb6c69'
+    }
+  }
+};
+
+// Variáveis globais otimizadas
+let NOTION_DATABASE_ID_1;
+let NOTION_PAGE_ID_1;
+let NOTION_PAGE_ID_2;
+let processedValues; // Cache dos dados processados
+
+// Função principal otimizada
+function importXLSXDataToGoogleSheetsAndExportToNotion() {
+  const startTime = new Date().getTime();
+  Logger.log("🚀 Iniciando processo otimizado...");
+  
+  try {
+    // 1. Carregar e processar dados de forma otimizada
+    processedValues = loadAndProcessData();
+    
+    if (!processedValues || processedValues.length < 2) {
+      throw new Error("Dados insuficientes ou inválidos");
+    }
+
+    // 2. Determinar configurações do Notion
+    const config = determineNotionConfig(processedValues);
+    
+    // 3. Executar operações em paralelo quando possível
+    const operations = [
+      () => createKML(processedValues),
+      () => updateDestSheetOptimized(),
+    ];
+    
+    // Executar operações básicas
+    operations.forEach(operation => {
+      try {
+        operation();
+      } catch (error) {
+        Logger.log(`Erro em operação: ${error}`);
+      }
+    });
+    
+    // 4. Processar Notion (operações mais pesadas)
+    if (config.hasCustomDatabase) {
+      // Caso com database customizado (mais simples)
+      exportDataToNotion(processedValues, CONFIG.NOTION_TOKEN_1, config.databaseId, CONFIG.notionUrl);
+    } else {
+      // Caso com database padrão (mais operações)
+      processDefaultNotionFlow(config);
+    }
+    
+    const endTime = new Date().getTime();
+    const executionTime = (endTime - startTime) / 1000;
+    Logger.log(`✅ Processo concluído em ${executionTime}s`);
+    
+  } catch (error) {
+    Logger.log(`❌ Erro no processo principal: ${error}`);
+    throw error;
+  }
+}
+
+// Função otimizada para carregar dados
+function loadAndProcessData() {
+  try {
+    Logger.log("📥 Carregando dados do Excel...");
+    
+    // Otimização: usar cache se disponível
+    if (processedValues && processedValues.length > 0) {
+      Logger.log("📋 Usando dados em cache");
+      return processedValues;
+    }
+    
+    // Carregar arquivo de forma otimizada
+    const blob = DriveApp.getFileById(CONFIG.fileId).getBlob();
+    
+    const tempFile = Drive.Files.insert({
+      title: `TempImport_${Date.now()}`, // Nome único para evitar conflitos
+      mimeType: MimeType.GOOGLE_SHEETS
+    }, blob);
+    
+    // Processar dados
+    const tempSpreadsheet = SpreadsheetApp.openById(tempFile.id);
+    const values = tempSpreadsheet.getSheets()[0].getDataRange().getValues();
+    
+    // Limpar arquivo temporário imediatamente
+    DriveApp.getFileById(tempFile.id).setTrashed(true);
+    
+    Logger.log(`📊 Dados carregados: ${values.length} linhas`);
+    return values;
+    
+  } catch (error) {
+    Logger.log(`Erro ao carregar dados: ${error}`);
+    throw error;
+  }
+}
+
+// Função otimizada para determinar configuração do Notion
+function determineNotionConfig(values) {
+  const config = {
+    hasCustomDatabase: false,
+    databaseId: null,
+    pageId1: null,
+    pageId2: null,
+    exportType: null
+  };
+  
+  // Verificar se tem database customizado
+  if (values[1][36]) {
+    config.hasCustomDatabase = true;
+    config.databaseId = getNotionDataBaseId(values[1][36]);
+    Logger.log(`🔗 Database customizado: ${config.databaseId}`);
+    return config;
+  }
+  
+  // Usar configuração padrão
+  config.exportType = values[1][33] || "Mídia Avulsa";
+  const defaultConfig = CONFIG.defaultDatabases[config.exportType] || CONFIG.defaultDatabases["Mídia Avulsa"];
+  
+  config.databaseId = defaultConfig.databaseId;
+  config.pageId1 = defaultConfig.pageId1;
+  config.pageId2 = defaultConfig.pageId2;
+  
+  Logger.log(`📂 Usando configuração padrão: ${config.exportType}`);
+  return config;
+}
+
+// Função otimizada para fluxo padrão do Notion
+function processDefaultNotionFlow(config) {
+  try {
+    // Atualizar variáveis globais
+    NOTION_DATABASE_ID_1 = config.databaseId;
+    NOTION_PAGE_ID_1 = config.pageId1;
+    NOTION_PAGE_ID_2 = config.pageId2;
+    
+    Logger.log("🔄 Iniciando fluxo do Notion...");
+    
+    // 1. Atualizar páginas (pode ser feito em paralelo)
+    Logger.log("📝 Atualizando páginas modelo...");
+    try {
+      updatePageNameAndIconOptimized(NOTION_PAGE_ID_1, processedValues[1], CONFIG.NOTION_TOKEN_1);
+      Utilities.sleep(200);
+      updatePageNameAndIconOptimized(NOTION_PAGE_ID_2, processedValues[1], CONFIG.NOTION_TOKEN_1);
+    } catch (error) {
+      Logger.log(`⚠️ Erro ao atualizar páginas: ${error}`);
+    }
+    
+    // 2. Limpar database - AGUARDAR CONCLUSÃO COMPLETA
+    Logger.log("🗑️ Limpando database - aguardando conclusão...");
+    const clearSuccess = clearNotionDatabase(CONFIG.NOTION_TOKEN_1, NOTION_DATABASE_ID_1);
+    
+    if (!clearSuccess) {
+      Logger.log("❌ Falha na limpeza do database - continuando mesmo assim...");
+    }
+    
+    // 3. Aguardar extra para garantir que as mudanças se propagaram
+    Logger.log("⏳ Aguardando propagação das mudanças...");
+    Utilities.sleep(3000); // 3 segundos extras
+    
+    // 4. Exportar novos dados
+    Logger.log("📤 Iniciando exportação de novos dados...");
+    exportDataToNotion(processedValues, CONFIG.NOTION_TOKEN_1, NOTION_DATABASE_ID_1, CONFIG.notionUrl);
+    
+    Logger.log("✅ Fluxo do Notion concluído");
+    
+  } catch (error) {
+    Logger.log(`❌ Erro no fluxo padrão do Notion: ${error}`);
+    throw error;
+  }
+}
+
+// Função otimizada para atualizar planilha
+function updateDestSheetOptimized() {
+  try {
+    Logger.log("📝 Atualizando planilha de destino...");
+    
+    const destSpreadsheet = SpreadsheetApp.openById(CONFIG.destinationSheetId);
+    const destSheet = destSpreadsheet.getSheets()[0];
+    
+    // Operações otimizadas em lote
+    destSheet.clear();
+    
+    if (processedValues && processedValues.length > 0) {
+      // Inserir dados em uma única operação
+      const range = destSheet.getRange(1, 1, processedValues.length, processedValues[0].length);
+      range.setValues(processedValues);
+      
+      // Formatação em uma única operação
+      range.setNumberFormat('@');
+    }
+    
+    Logger.log("✅ Planilha atualizada com sucesso");
+    
+  } catch (error) {
+    Logger.log(`Erro ao atualizar planilha: ${error}`);
+    throw error;
+  }
+}
+
+// Função otimizada para criar mapa (versão simplificada)
+function createMap() {
+  try {
+    Logger.log("🗺️ Criando mapa...");
+    
+    // Carregar dados se não estiverem em cache
+    if (!processedValues) {
+      processedValues = loadAndProcessData();
+    }
+    
+    updateDestSheetOptimized();
+    createKML(processedValues);
+    
+    Logger.log("✅ Mapa criado com sucesso");
+    
+  } catch (error) {
+    Logger.log(`Erro ao criar mapa: ${error}`);
+    throw error;
+  }
+}
+
+// Função auxiliar otimizada para update de página
+function updatePageNameAndIconOptimized(pageId, values, token) {
+  if (!pageId || !values || !token) {
+    Logger.log("⚠️ Parâmetros inválidos para update de página");
+    return;
+  }
+  
+  try {
+    const newName = `${removeEspacosExtras(values[34] || 'Sem nome')} (${dateTimeFunction()})`;
+    const clientUrl = values[32];
+    const icon = createPageIcon(clientUrl);
+    
+    const payload = {
+      properties: {
+        title: [{
+          text: { content: newName }
+        }]
+      }
+    };
+    
+    // Adicionar ícone apenas se válido
+    if (icon) {
+      payload.icon = {
+        type: "external",
+        external: { url: icon }
+      };
+    }
+    
+    const response = UrlFetchApp.fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+      method: "PATCH",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+    
+    if (response.getResponseCode() === 200) {
+      Logger.log(`✅ Página ${pageId} atualizada: ${newName}`);
+    } else {
+      Logger.log(`⚠️ Erro ao atualizar página ${pageId}: ${response.getContentText()}`);
+    }
+    
+  } catch (error) {
+    Logger.log(`Erro ao atualizar página ${pageId}: ${error}`);
+  }
+}
+
+// Função para limpar cache (útil para testes)
+function clearProcessCache() {
+  processedValues = null;
+  clearCache(); // Limpa cache das funções utilitárias
+  NOTION_CACHE.dbProperties.clear();
+  NOTION_CACHE.dbSchemas.clear();
+  Logger.log("🧹 Cache limpo");
+}
+
+// Função de diagnóstico
+function diagnosticInfo() {
+  Logger.log("=== DIAGNÓSTICO DO SISTEMA ===");
+  Logger.log(`Dados em cache: ${processedValues ? processedValues.length + ' linhas' : 'Nenhum'}`);
+  Logger.log(`Database ID atual: ${NOTION_DATABASE_ID_1 || 'Não definido'}`);
+  Logger.log(`Page ID 1: ${NOTION_PAGE_ID_1 || 'Não definido'}`);
+  Logger.log(`Page ID 2: ${NOTION_PAGE_ID_2 || 'Não definido'}`);
+  Logger.log("===============================");
+}
