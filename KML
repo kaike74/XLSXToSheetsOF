@@ -1,0 +1,212 @@
+function createKML(data) {
+  const kmlHeader = '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n';
+  const kmlFooter = '</Document>\n</kml>';
+
+  // Arrays para construção mais eficiente
+  const styleBlocks = [];
+  const placemarkBlocks = [];
+  const coverageBlocks = [];
+  
+  // Cache para maior raio por cidade
+  const largestRadiusByCity = new Map();
+
+  // Processa todos os dados em uma única passagem
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    
+    // Validações básicas uma única vez
+    const name = row[8] || 'Sem nome';
+    const longitude = parseFloat(row[2]);
+    const latitude = parseFloat(row[3]);
+    
+    if (isNaN(longitude) || isNaN(latitude)) {
+      Logger.log(`Coordenadas inválidas para linha ${i}: ${longitude}, ${latitude}`);
+      continue;
+    }
+    
+    const region = row[4] || '';
+    const uf = row[6] || '';
+    const praca = row[7] || '';
+    const dial = row[9] || '';
+    const estiloMusical = row[10] || '';
+    const genero = row[11] || '';
+    const classe = row[12] || '';
+    const idade = row[13] || '';
+    const universo = row[14] || '';
+    const pmm = row[16] || '';
+
+    // Otimização: criar URL do ícone uma única vez
+    const iconUrl = createIcon(row, 27);
+    const imageUrl = createImage(row, 27);
+
+    // 1. Criar estilo (otimizado com template literal)
+    styleBlocks.push(`
+    <Style id="icon-${i}-normal">
+      <IconStyle>
+        <scale>1</scale>
+        <Icon><href>${iconUrl}</href></Icon>
+      </IconStyle>
+      <LabelStyle><scale>0</scale></LabelStyle>
+    </Style>
+    <Style id="icon-${i}-highlight">
+      <IconStyle>
+        <scale>1</scale>
+        <Icon><href>${iconUrl}</href></Icon>
+      </IconStyle>
+    </Style>`);
+
+    // 2. Criar placemark (otimizado com template literal)
+    placemarkBlocks.push(`
+      <Placemark>
+        <name>${escapeXML(name)}</name>
+        <styleUrl>#icon-${i}-normal</styleUrl>
+        <description><![CDATA[
+          <img src="${imageUrl}" width="200" height="150"/><br/>
+          Região: ${escapeXML(region)}<br/>
+          UF: ${escapeXML(uf)}<br/>
+          Praça: ${escapeXML(praca)}<br/>
+          Dial: ${escapeXML(dial)}<br/>
+          Estilo Musical: ${escapeXML(estiloMusical)}<br/>
+          Gênero: ${escapeXML(genero)}<br/>
+          Classe: ${escapeXML(classe)}<br/>
+          Idade: ${escapeXML(idade)}<br/>
+          Universo: ${escapeXML(universo)}<br/>
+          PMM: ${escapeXML(pmm)}<br/>
+        ]]></description>
+        <Point>
+          <coordinates>${longitude},${latitude}</coordinates>
+        </Point>
+      </Placemark>`);
+
+    // 3. Calcular raio para cobertura
+    let radius = row[1] ? parseFloat(row[1]) * 2 : 20000;
+    const city = praca;
+    
+    if (city && (!largestRadiusByCity.has(city) || radius > largestRadiusByCity.get(city).radius)) {
+      largestRadiusByCity.set(city, { latitude, longitude, radius });
+    }
+  }
+
+  // Criar círculos de cobertura otimizado
+  for (const [city, circle] of largestRadiusByCity) {
+    coverageBlocks.push(`
+      <Placemark>
+        <name>${escapeXML(city)}</name>
+        ${createCircleCoordinatesOptimized(circle.latitude, circle.longitude, circle.radius)}
+      </Placemark>`);
+  }
+
+  // Montagem final otimizada com join
+  const kmlContent = [
+    ...styleBlocks,
+    '<Folder>\n<name>Emissoras</name>',
+    ...placemarkBlocks,
+    '</Folder>',
+    '<Folder>\n<name>Projeção de cobertura</name>',
+    ...coverageBlocks,
+    '</Folder>'
+  ].join('\n');
+
+  const kmlOutput = kmlHeader + kmlContent + kmlFooter;
+
+  // Envio de email otimizado
+  sendKMLEmail(kmlOutput, data);
+}
+
+// Função auxiliar para escape XML (nova)
+function escapeXML(str) {
+  if (!str) return '';
+  return String(str).replace(/[&<>"']/g, function(match) {
+    const escapeMap = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&apos;'
+    };
+    return escapeMap[match];
+  });
+}
+
+// Função otimizada para círculos
+function createCircleCoordinatesOptimized(lat, lng, radius) {
+  const earthRadius = 6371000;
+  const numPoints = 24; // Reduzido de 36 para 24 (ainda boa qualidade, mais rápido)
+  const angleStep = (2 * Math.PI) / numPoints;
+  const coords = [];
+
+  // Pré-calcular constantes
+  const latRadians = (Math.PI * lat) / 180;
+  const cosLat = Math.cos(latRadians);
+  const latFactor = 180 / (Math.PI * earthRadius);
+  const lngFactor = 180 / (Math.PI * earthRadius * cosLat);
+
+  for (let i = 0; i < numPoints; i++) {
+    const angle = i * angleStep;
+    const dx = radius * Math.cos(angle);
+    const dy = radius * Math.sin(angle);
+
+    const newLat = lat + (dy * latFactor);
+    const newLng = lng + (dx * lngFactor);
+    
+    coords.push(`${newLng.toFixed(6)},${newLat.toFixed(6)}`);
+  }
+
+  return `<Polygon>
+    <outerBoundaryIs>
+      <LinearRing>
+        <coordinates>${coords.join(' ')}</coordinates>
+      </LinearRing>
+    </outerBoundaryIs>
+  </Polygon>`;
+}
+
+// Função otimizada para envio de email
+function sendKMLEmail(kmlOutput, data) {
+  try {
+    const kmlFileName = `Rádios - ${data[1][34] || 'Export'}.kml`;
+    
+    // Criar arquivo diretamente sem intermediários
+    const file = DriveApp.getRootFolder().createFile(kmlFileName, kmlOutput, MimeType.PLAIN_TEXT);
+    
+    // Preparar email
+    let emailAddress = data[1][26];
+    if (emailAddress === "kaike@eradios.com.br") {
+      emailAddress = "kaike@hubradios.com";
+    }
+
+    if (!emailAddress) {
+      Logger.log("Email não encontrado, pulando envio");
+      return;
+    }
+
+    const emailConfig = {
+      to: emailAddress,
+      subject: 'Arquivo KML de Rádios',
+      body: `Olá,
+
+Segue em anexo o arquivo KML contendo os dados das emissoras e seus círculos de cobertura.
+
+Para utilizar o arquivo KML, siga estas etapas:
+
+1. Baixe o arquivo KML em anexo.
+2. Acesse o Google My Maps pelo link: https://www.google.com/maps/d/u/0/.
+3. Clique na opção "Criar um novo mapa".
+4. No novo mapa, procure a opção "Importar" e selecione o arquivo KML que você baixou.
+
+Atenciosamente,`,
+      attachments: [file]
+    };
+
+    MailApp.sendEmail(emailConfig);
+    Logger.log(`KML enviado para: ${emailAddress}`);
+    
+  } catch (error) {
+    Logger.log(`Erro ao enviar email KML: ${error}`);
+  }
+}
+
+// Mantém compatibilidade com função original
+function createCircleCoordinates(lat, lng, radius) {
+  return createCircleCoordinatesOptimized(lat, lng, radius);
+}
