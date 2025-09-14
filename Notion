@@ -1,0 +1,705 @@
+// Cache global para evitar chamadas repetitivas à API do Notion
+const NOTION_CACHE = {
+  dbProperties: new Map(),
+  dbSchemas: new Map()
+};
+
+// Configurações da API Notion otimizadas
+const NOTION_CONFIG = {
+  headers: {
+    "Content-Type": "application/json",
+    "Notion-Version": "2022-06-28"
+  },
+  baseUrl: "https://api.notion.com/v1"
+};
+
+function clearNotionDatabase(token, databaseId) {
+  const queryUrl = `${NOTION_CONFIG.baseUrl}/databases/${databaseId}/query`;
+  
+  const headers = {
+    ...NOTION_CONFIG.headers,
+    "Authorization": `Bearer ${token}`
+  };
+
+  try {
+    Logger.log("🗑️ Iniciando limpeza do database...");
+
+    // Buscar todas as páginas (pode precisar de múltiplas chamadas se > 100)
+    let allPages = [];
+    let hasMore = true;
+    let nextCursor = null;
+
+    while (hasMore) {
+      const queryPayload = { page_size: 100 };
+      if (nextCursor) {
+        queryPayload.start_cursor = nextCursor;
+      }
+
+      const queryResponse = UrlFetchApp.fetch(queryUrl, {
+        method: "post",
+        headers: headers,
+        payload: JSON.stringify(queryPayload),
+        muteHttpExceptions: true
+      });
+
+      if (queryResponse.getResponseCode() !== 200) {
+        Logger.log(`❌ Erro ao consultar database: ${queryResponse.getContentText()}`);
+        return false;
+      }
+
+      const data = JSON.parse(queryResponse.getContentText());
+      allPages = allPages.concat(data.results);
+      
+      hasMore = data.has_more;
+      nextCursor = data.next_cursor;
+      
+      // Pequeno delay entre consultas
+      if (hasMore) {
+        Utilities.sleep(300);
+      }
+    }
+    
+    if (allPages.length === 0) {
+      Logger.log("✅ Database já está vazio");
+      return true;
+    }
+
+    Logger.log(`🔄 Arquivando ${allPages.length} páginas...`);
+
+    // Processar em lotes menores para garantir estabilidade
+    const batchSize = 5; // Reduzido para maior estabilidade
+    let archivedCount = 0;
+    let errors = 0;
+
+    for (let i = 0; i < allPages.length; i += batchSize) {
+      const batch = allPages.slice(i, i + batchSize);
+      
+      // Processar cada página do lote sequencialmente
+      for (const page of batch) {
+        try {
+          const response = UrlFetchApp.fetch(`${NOTION_CONFIG.baseUrl}/pages/${page.id}`, {
+            method: "patch",
+            headers: headers,
+            payload: JSON.stringify({ archived: true }),
+            muteHttpExceptions: true
+          });
+
+          if (response.getResponseCode() === 200) {
+            archivedCount++;
+          } else {
+            errors++;
+            Logger.log(`⚠️ Erro ao arquivar ${page.id}: ${response.getContentText()}`);
+          }
+
+          // Delay entre cada operação individual
+          Utilities.sleep(150);
+
+        } catch (error) {
+          errors++;
+          Logger.log(`❌ Erro ao arquivar página ${page.id}: ${error}`);
+        }
+      }
+      
+      // Log de progresso
+      Logger.log(`📊 Progresso: ${Math.min(i + batchSize, allPages.length)}/${allPages.length} páginas processadas`);
+      
+      // Delay maior entre lotes
+      if (i + batchSize < allPages.length) {
+        Utilities.sleep(500);
+      }
+    }
+
+    Logger.log(`✅ Limpeza concluída: ${archivedCount} arquivadas, ${errors} erros`);
+
+    // Verificação final - aguardar um pouco e verificar se ainda existem páginas
+    Logger.log("🔍 Verificando limpeza...");
+    Utilities.sleep(2000); // Aguarda 2 segundos
+
+    const verificationResponse = UrlFetchApp.fetch(queryUrl, {
+      method: "post",
+      headers: headers,
+      payload: JSON.stringify({ page_size: 10 }),
+      muteHttpExceptions: true
+    });
+
+    if (verificationResponse.getResponseCode() === 200) {
+      const verificationData = JSON.parse(verificationResponse.getContentText());
+      const remainingPages = verificationData.results.length;
+      
+      if (remainingPages > 0) {
+        Logger.log(`⚠️ Ainda existem ${remainingPages} páginas no database`);
+        return false;
+      } else {
+        Logger.log("✅ Database completamente limpo e verificado");
+        return true;
+      }
+    }
+
+    return archivedCount > 0 && errors === 0;
+
+  } catch (error) {
+    Logger.log(`❌ Erro crítico ao limpar database: ${error}`);
+    return false;
+  }
+}
+
+function exportDataToNotion(data, token, databaseId, url) {
+  const headers = data[0];
+  const exportType = data[1][33];
+
+  // Pre-cache database properties
+  if (exportType === "Mídia Avulsa") {
+    getNotionDatabaseProperties(databaseId, token);
+  } else if (exportType === "Patrocínio") {
+    getNotionDatabasePropertiesFull(databaseId, token);
+  }
+
+  // Processar em lotes para otimizar performance
+  const batchSize = 5; // Reduzido para evitar timeout
+  const batches = [];
+  
+  for (let i = 1; i < data.length; i += batchSize) {
+    batches.push(data.slice(i, i + batchSize));
+  }
+
+  let processedCount = 0;
+  
+  batches.forEach((batch, batchIndex) => {
+    batch.forEach((row, rowIndex) => {
+      const actualIndex = batchIndex * batchSize + rowIndex + 1;
+      
+      try {
+        if (exportType === "Mídia Avulsa") {
+          sendRowToNotionSingleMediaOptimized(row, token, databaseId, url, row[31], headers);
+        } else if (exportType === "Patrocínio") {
+          sendRowToNotionSponsorshipOptimized(row, token, databaseId, url, row[31], headers);
+        }
+        processedCount++;
+      } catch (error) {
+        Logger.log(`Erro ao processar linha ${actualIndex}: ${error}`);
+      }
+    });
+    
+    // Delay entre lotes para evitar rate limit
+    if (batchIndex < batches.length - 1) {
+      Utilities.sleep(300);
+    }
+    
+    Logger.log(`Lote ${batchIndex + 1}/${batches.length} processado (${processedCount} registros)`);
+  });
+}
+
+function sendRowToNotionSingleMediaOptimized(row, token, databaseId, url, coverPath, headers) {
+  // URLs otimizadas
+  const iconUrl = createImage(row, 27);
+  const coverUrl = coverPath ? createImage(row, 31) : iconUrl;
+
+  // Buscar propriedades do banco (com cache)
+  const dbProps = getNotionDatabaseProperties(databaseId, token);
+  
+  // Mapeamento otimizado com validação de existência
+  const properties = buildPropertiesSingleMedia(row, dbProps);
+
+  // Payload otimizado
+  const notionPayload = {
+    parent: { database_id: databaseId },
+    cover: { type: "external", external: { url: coverUrl } },
+    icon: { type: "external", external: { url: iconUrl } },
+    properties: properties
+  };
+
+  // Enviar para Notion
+  const response = sendToNotionAPI(url, token, notionPayload);
+  
+  if (response && response.id) {
+    // Adicionar conteúdo extra de forma assíncrona (otimizada)
+    addExtraContentOptimized(response.id, token, row);
+  }
+}
+
+function sendRowToNotionSponsorshipOptimized(row, token, databaseId, url, coverPath, headers) {
+  const iconUrl = createImage(row, 27);
+  const coverUrl = coverPath ? createImage(row, 31) : iconUrl;
+
+  // Buscar schema do banco (com cache)
+  const schema = getNotionDatabasePropertiesFull(databaseId, token);
+  
+  // Construir propriedades dinamicamente
+  const properties = buildPropertiesSponsorship(row, headers, schema);
+
+  const notionPayload = {
+    parent: { database_id: databaseId },
+    cover: { type: "external", external: { url: coverUrl } },
+    icon: { type: "external", external: { url: iconUrl } },
+    properties: properties
+  };
+
+  const response = sendToNotionAPI(url, token, notionPayload);
+  
+  if (response && response.id) {
+    addExtraContentOptimized(response.id, token, row);
+  }
+}
+
+// Função auxiliar otimizada para buscar propriedades
+function getNotionDatabaseProperties(databaseId, token) {
+  if (NOTION_CACHE.dbProperties.has(databaseId)) {
+    return NOTION_CACHE.dbProperties.get(databaseId);
+  }
+
+  try {
+    const response = UrlFetchApp.fetch(`${NOTION_CONFIG.baseUrl}/databases/${databaseId}`, {
+      method: "get",
+      headers: {
+        ...NOTION_CONFIG.headers,
+        "Authorization": `Bearer ${token}`
+      },
+      muteHttpExceptions: true
+    });
+
+    const data = JSON.parse(response.getContentText());
+    const properties = data.properties ? Object.keys(data.properties) : [];
+    
+    NOTION_CACHE.dbProperties.set(databaseId, properties);
+    return properties;
+  } catch (error) {
+    Logger.log(`Erro ao buscar propriedades do database: ${error}`);
+    return [];
+  }
+}
+
+function getNotionDatabasePropertiesFull(databaseId, token) {
+  if (NOTION_CACHE.dbSchemas.has(databaseId)) {
+    return NOTION_CACHE.dbSchemas.get(databaseId);
+  }
+
+  try {
+    const response = UrlFetchApp.fetch(`${NOTION_CONFIG.baseUrl}/databases/${databaseId}`, {
+      method: "get",
+      headers: {
+        ...NOTION_CONFIG.headers,
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    const data = JSON.parse(response.getContentText());
+    if (!data.properties) {
+      throw new Error("Não foi possível obter o schema do banco do Notion");
+    }
+
+    NOTION_CACHE.dbSchemas.set(databaseId, data.properties);
+    return data.properties;
+  } catch (error) {
+    Logger.log(`Erro ao buscar schema do database: ${error}`);
+    return {};
+  }
+}
+
+// Função otimizada para construir propriedades Single Media
+function buildPropertiesSingleMedia(row, dbProps) {
+  const columnMap = {
+    "ID": [propertieRichText, 0],
+    "Região": [propertieSelect, 4],
+    "Mesorregião": [propertieRichText, 5],
+    "UF": [propertieRichText, 6],
+    "Praça": [propertieRichText, 7],
+    "Emissora": [propertieTittle, 8],
+    "Dial": [propertieRichText, 9],
+    "Estilo musical": [propertieMultiSelect, 10],
+    "Gênero": [propertieRichTextAndAnnotation, 11, "pink"],
+    "Classe": [propertieRichTextAndAnnotation, 12, "yellow"],
+    "Idade": [propertieRichTextAndAnnotation, 13, "blue"],
+    "Universo": [propertieNumber, 14],
+    "Caixa comercial": [propertieRichTextCaixaComercial, 15],
+    "PMM": [propertieNumber, 16],
+    "Spots 30ʺ": [propertieNumber, 17],
+    "Valor spot 30ʺ (Tabela)": [propertieNumber, 18],
+    "Valor spot 30ʺ (Negociado)": [propertieNumber, 19],
+    "Test. 60ʺ": [propertieNumber, 20],
+    "Valor test. 60ʺ (Tabela)": [propertieNumber, 21],
+    "Valor test. 60ʺ (Negociado)": [propertieNumber, 22],
+    "Cachê": [propertieNumber, 23],
+    "Comentários": [propertieRichText, 24],
+    "Classificação": [propertieNumber, 25],
+    "Classe AB": [propertieNumber, 37],
+    "Classe C": [propertieNumber, 38],
+    "Classe DE": [propertieNumber, 39],
+    "Cobertura": [propertieMultiSelect, 40],
+    "Data inicio": [propertieDate, "next_month_start"],
+    "Data fim": [propertieDate, "next_month_end"], 
+    "Dias da semana": [propertieWeekdays, "weekdays"]
+  };
+
+  const properties = {};
+  
+  for (const [propName, config] of Object.entries(columnMap)) {
+    if (!dbProps.includes(propName)) continue;
+
+    const [func, colIndex, extraParam] = config;
+
+    if (propName === "Data inicio" || propName === "Data fim" || propName === "Dias da semana") {
+      properties[propName] = extraParam ? func(row, colIndex, extraParam) : func(row, colIndex);
+    } else if (row.length > colIndex && row[colIndex] !== undefined && row[colIndex] !== "") {
+      properties[propName] = extraParam ? func(row, colIndex, extraParam) : func(row, colIndex);
+    }
+  }
+
+  return properties;
+}
+
+// Função otimizada para construir propriedades Sponsorship
+function buildPropertiesSponsorship(row, headers, schema) {
+  const properties = {};
+  
+  Object.keys(schema).forEach(propName => {
+    const field = schema[propName];
+
+    // Campos calculados automaticamente
+    if (propName === "Data inicio") {
+      const dates = getNextMonthDates();
+      properties[propName] = { date: { start: dates.start } };
+      return;
+    }
+    
+    if (propName === "Data fim") {
+      const dates = getNextMonthDates();
+      properties[propName] = { date: { start: dates.end } };
+      return;
+    }
+    
+    if (propName === "Dias da semana") {
+      properties[propName] = {
+        multi_select: [
+          { name: "Seg." }, { name: "Ter." }, { name: "Qua." }, { name: "Qui." }, { name: "Sex." }
+        ]
+      };
+      return;
+    }
+
+    const colIndex = headers.indexOf(propName);
+    if (colIndex === -1) return;
+
+    const value = row[colIndex];
+    if (value === undefined || value === null || String(value).trim() === "") return;
+
+    // Criar propriedade baseada no tipo
+    properties[propName] = createPropertyByType(field.type, value, propName);
+  });
+
+  return properties;
+}
+
+// Função auxiliar para criar propriedades por tipo
+function createPropertyByType(type, value, propName) {
+  const annotations = getAnnotationsByProperty(propName);
+  
+  switch (type) {
+    case "title":
+      return { title: [{ text: { content: String(value) } }] };
+    case "rich_text":
+      return { 
+        rich_text: [{
+          text: { content: String(value) },
+          annotations: annotations
+        }]
+      };
+    case "number":
+      return { number: Number(value) };
+    case "select":
+      return { select: { name: String(value) } };
+    case "multi_select":
+      return {
+        multi_select: String(value).split(",").map(v => ({ name: v.trim() }))
+      };
+    case "date":
+      return { date: { start: String(value) } };
+    case "checkbox":
+      return { checkbox: Boolean(value) };
+    case "url":
+      return { url: String(value) };
+    default:
+      return { rich_text: [{ text: { content: String(value) } }] };
+  }
+}
+
+// Função auxiliar para anotações
+function getAnnotationsByProperty(propName) {
+  const annotationMap = {
+    "Gênero": { bold: true, color: "pink" },
+    "Classe": { bold: true, color: "yellow" },
+    "Idade": { bold: true, color: "blue" }
+  };
+  return annotationMap[propName] || {};
+}
+
+// Função otimizada para envio à API
+function sendToNotionAPI(url, token, payload) {
+  try {
+    const response = UrlFetchApp.fetch(url, {
+      method: "post",
+      headers: {
+        ...NOTION_CONFIG.headers,
+        "Authorization": `Bearer ${token}`
+      },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    if (response.getResponseCode() >= 400) {
+      Logger.log(`Erro HTTP ${response.getResponseCode()}: ${response.getContentText()}`);
+      return null;
+    }
+
+    return JSON.parse(response.getContentText());
+  } catch (error) {
+    Logger.log(`Erro ao enviar para Notion: ${error}`);
+    return null;
+  }
+}
+
+// Função otimizada para adicionar conteúdo extra
+function addExtraContentOptimized(pageId, token, row) {
+  const urlApi = `${NOTION_CONFIG.baseUrl}/blocks/${pageId}/children`;
+  
+  // Executar operações em paralelo quando possível
+  const operations = [];
+  
+  if (row[28]) operations.push(() => addFileToNotionPageOptimized(urlApi, row[28], token));
+  if (row[29]) operations.push(() => addLinkToPageContentOptimized(token, urlApi, row, "row[29]"));
+  if (row[30]) operations.push(() => addLinkToPageContentOptimized(token, urlApi, row, "row[30]"));
+  if (row[35]) operations.push(() => addLinkToNotionPageOptimized(urlApi, row, 35, token));
+  
+  // Executar operações com pequeno delay entre elas
+  operations.forEach((operation, index) => {
+    try {
+      operation();
+      if (index < operations.length - 1) {
+        Utilities.sleep(100);
+      }
+    } catch (error) {
+      Logger.log(`Erro em operação extra ${index}: ${error}`);
+    }
+  });
+  
+  // Adicionar link de distribuição
+  updatePageWithDistributionLinkOptimized(pageId, token);
+}
+
+// Versões otimizadas das funções de conteúdo extra (funcionalidade completa)
+function addFileToNotionPageOptimized(urlApi, filePath, token) {
+  if (!filePath) return;
+  
+  const fileName = filePath.split("/").pop();
+  const fileId = getFileIdByName(fileName);
+
+  if (!fileId) {
+    Logger.log(`Arquivo não encontrado: ${fileName}`);
+    return;
+  }
+
+  const driveUrl = `https://drive.google.com/file/d/${fileId}/view?usp=drive_link`;
+
+  const blocksPayload = {
+    children: [{
+      type: "callout", 
+      callout: {
+        icon: { type: "emoji", emoji: "🖇️" },
+        rich_text: [{
+          type: "text",
+          text: { content: "MIDIA KIT" },
+          annotations: { bold: true }
+        }],
+        children: [{
+          type: "file", 
+          file: {
+            external: { url: driveUrl },
+            name: "Mídia Kit"
+          }
+        }]
+      }
+    }]
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(urlApi, {
+      method: "patch",
+      headers: {
+        ...NOTION_CONFIG.headers,
+        "Authorization": `Bearer ${token}`
+      },
+      payload: JSON.stringify(blocksPayload),
+      muteHttpExceptions: true
+    });
+
+    if (response.getResponseCode() >= 400) {
+      Logger.log(`Erro ao adicionar arquivo: ${response.getContentText()}`);
+    }
+  } catch (error) {
+    Logger.log(`Erro ao adicionar arquivo à página: ${error}`);
+  }
+}
+
+function addLinkToPageContentOptimized(token, urlApi, row, column) {
+  let socialMediaLink, media, urlIcon, path;
+
+  if (column === "row[30]") {
+    socialMediaLink = "https://www.instagram.com/";
+    media = "Instagram";
+    urlIcon = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Instagram_icon.png/1200px-Instagram_icon.png";
+    path = row[30];
+  } else if (column === "row[29]") {
+    socialMediaLink = "https://www.facebook.com/";
+    media = "Facebook";
+    urlIcon = "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fb/Facebook_icon_2013.svg/2048px-Facebook_icon_2013.svg.png";
+    path = row[29];
+  } else {
+    return;
+  }
+
+  if (!path) return;
+
+  const socialMediaParametro = processSocialMediaLink(path, row);
+  if (!socialMediaParametro) return;
+
+  socialMediaLink += socialMediaParametro;
+
+  const payload = {
+    children: [{
+      object: "block",
+      type: "callout",
+      callout: {
+        icon: {
+          type: "external",
+          external: { url: urlIcon }
+        },
+        rich_text: [{
+          type: "text",
+          text: {
+            content: `${media} | Rádio ${row[8]} - ${row[9]}`,
+            link: { url: socialMediaLink }
+          },
+          annotations: { bold: true }
+        }]
+      }
+    }]
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(urlApi, {
+      method: "PATCH",
+      headers: {
+        ...NOTION_CONFIG.headers,
+        "Authorization": `Bearer ${token}`
+      },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    if (response.getResponseCode() >= 400) {
+      Logger.log(`Erro ao adicionar link ${media}: ${response.getContentText()}`);
+    }
+  } catch (error) {
+    Logger.log(`Erro ao adicionar link ${media}: ${error}`);
+  }
+}
+
+function addLinkToNotionPageOptimized(urlApi, row, index, token) {
+  const radioLink = row[index];
+
+  if (!radioLink || radioLink.length === 0 || !radioLink.includes("apption.co")) {
+    return;
+  }
+
+  const blocksPayload = {
+    children: [{
+      object: "block",
+      type: "embed",
+      embed: { url: radioLink }
+    }]
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(urlApi, {
+      method: "patch",
+      headers: {
+        ...NOTION_CONFIG.headers,
+        "Authorization": `Bearer ${token}`
+      },
+      payload: JSON.stringify(blocksPayload),
+      muteHttpExceptions: true
+    });
+
+    if (response.getResponseCode() >= 400) {
+      Logger.log(`Erro ao adicionar embed de rádio: ${response.getContentText()}`);
+    }
+  } catch (error) {
+    Logger.log(`Erro ao adicionar embed à página: ${error}`);
+  }
+}
+
+function updatePageWithDistributionLinkOptimized(pageId, token) {
+  const cleanUuid = pageId.replace(/-/g, '');
+  const calendarUrl = `https://distribuicaoemidias.netlify.app/?id=${cleanUuid}`;
+  
+  const payload = {
+    properties: {
+      "Distribuição": {
+        rich_text: [{
+          type: "text",
+          text: { content: "Acesse a distribuição", link: { url: calendarUrl } },
+          annotations: { bold: true, color: "blue" }
+        }]
+      }
+    }
+  };
+
+  try {
+    UrlFetchApp.fetch(`${NOTION_CONFIG.baseUrl}/pages/${pageId}`, {
+      method: "patch",
+      headers: {
+        ...NOTION_CONFIG.headers,
+        "Authorization": `Bearer ${token}`
+      },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+  } catch (error) {
+    Logger.log(`Erro ao adicionar link de distribuição: ${error}`);
+  }
+}
+
+// Funções auxiliares mantidas
+function getNextMonthDates() {
+  const today = new Date();
+  const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+  const lastDay = new Date(today.getFullYear(), today.getMonth() + 2, 0);
+  
+  const formatDate = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  
+  return {
+    start: formatDate(nextMonth),
+    end: formatDate(lastDay)
+  };
+}
+
+function propertieDate(row, type) {
+  const dates = getNextMonthDates();
+  if (type === "next_month_start") {
+    return { date: { start: dates.start } };
+  } else if (type === "next_month_end") {
+    return { date: { start: dates.end } };
+  }
+}
+
+function propertieWeekdays(row, type) {
+  return {
+    multi_select: [
+      { name: "Seg." }, { name: "Ter." }, { name: "Qua." }, { name: "Qui." }, { name: "Sex." }
+    ]
+  };
+}
