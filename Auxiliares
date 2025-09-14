@@ -1,0 +1,224 @@
+// Cache para otimizar operações repetitivas
+const CACHE = {
+  fileIds: new Map(),
+  processedUrls: new Map(),
+  dateTime: null,
+  dateTimeExpiry: 0
+};
+
+// Constantes para evitar recriação
+const BASE_IMAGE_URL = 'https://www.appsheet.com/image/getimageurl?appName=E-R%C3%A1dios-408183446-24-03-22-2';
+const SIGNATURE_IMAGE = 'a107f1dc96a649316127fec7b49d24ce2c7a224625d288be3423631f42d8ea3f';
+const SIGNATURE_COVER = '9b91074fbffb5c9c28db76c102ad644c0114e92ce5950732557d9113762752a8';
+const VERSION_RADIOS = '1.002203';
+const VERSION_CLIENTES = '1.001749';
+
+function getNotionDataBaseId(url) {
+  // Cache para URLs já processadas
+  if (CACHE.processedUrls.has(url)) {
+    return CACHE.processedUrls.get(url);
+  }
+  
+  const match = url.match(/e-radios\/(.*?)\?/);
+  const result = match ? match[1] : null;
+  
+  CACHE.processedUrls.set(url, result);
+  return result;
+}
+
+function createImage(row, index) {
+  // Evita encodeURIComponent desnecessário se já estiver encodado
+  const fileName = row[index];
+  if (!fileName) return '';
+  
+  return `${BASE_IMAGE_URL}&tableName=R%C3%A1dios%202&fileName=${encodeURIComponent(fileName)}&appVersion=${VERSION_RADIOS}&signature=${SIGNATURE_IMAGE}`;
+}
+
+function createCover(row, index) {
+  const fileName = row[index];
+  if (!fileName) return '';
+  
+  return `${BASE_IMAGE_URL}&tableName=R%C3%A1dios%202&fileName=${encodeURIComponent(fileName)}&appVersion=${VERSION_RADIOS}&signature=${SIGNATURE_COVER}`;
+}
+
+function createPageIcon(row) {
+  if (!row || !row.includes('::')) return '';
+  
+  const [prefix, filePath] = row.split('::');
+  return `${BASE_IMAGE_URL}&tableName=Clientes&fileName=${encodeURIComponent(filePath)}&appVersion=${VERSION_CLIENTES}&`;
+}
+
+function createIcon(row, index) {
+  const fileName = row[index];
+  if (!fileName) return '';
+  
+  const link = `${BASE_IMAGE_URL}&tableName=R%C3%A1dios%202&fileName=${encodeURIComponent(fileName)}&appVersion=${VERSION_RADIOS}&signature=${SIGNATURE_COVER}`;
+  
+  // Otimização: usar replace encadeado ao invés de múltiplos replace
+  return link
+    .replace(/[&<>"']/g, function(match) {
+      const escapeMap = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&apos;'
+      };
+      return escapeMap[match];
+    });
+}
+
+// Cache para IDs de arquivos já buscados
+function getFileIdByName(fileName) {
+  if (!fileName) return null;
+  
+  // Verifica cache primeiro
+  if (CACHE.fileIds.has(fileName)) {
+    return CACHE.fileIds.get(fileName);
+  }
+  
+  try {
+    const files = DriveApp.getFilesByName(fileName);
+    const fileId = files.hasNext() ? files.next().getId() : null;
+    
+    // Armazena no cache
+    CACHE.fileIds.set(fileName, fileId);
+    return fileId;
+  } catch (error) {
+    // Log apenas em caso de erro
+    Logger.log(`Erro ao buscar arquivo ${fileName}: ${error}`);
+    return null;
+  }
+}
+
+function removeEspacosExtras(str) {
+  if (!str || typeof str !== 'string') return '';
+  
+  // Otimização: usar uma única operação de regex
+  return str.replace(/\s+/g, ' ').trim();
+}
+
+function dateTimeFunction() {
+  const now = Date.now();
+  
+  // Cache de 1 minuto para evitar recálculos desnecessários
+  if (CACHE.dateTime && now < CACHE.dateTimeExpiry) {
+    return CACHE.dateTime;
+  }
+  
+  const currentDate = new Date();
+  
+  // Usar padStart é mais eficiente que concatenação de strings
+  const day = String(currentDate.getDate()).padStart(2, '0');
+  const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+  const hour = String(currentDate.getHours()).padStart(2, '0');
+  const minutes = String(currentDate.getMinutes()).padStart(2, '0');
+  
+  const dateTime = `${day}/${month} - ${hour}:${minutes}`;
+  
+  // Atualiza cache (válido por 1 minuto)
+  CACHE.dateTime = dateTime;
+  CACHE.dateTimeExpiry = now + 60000;
+  
+  return dateTime;
+}
+
+function processSocialMediaLink(url, row) {
+  if (!url) return null;
+  
+  // Cache para URLs já processadas
+  const cacheKey = `${url}_${row[7]}_${row[8]}`;
+  if (CACHE.processedUrls.has(cacheKey)) {
+    return CACHE.processedUrls.get(cacheKey);
+  }
+  
+  try {
+    // Remove protocolo uma única vez
+    let cleanUrl = url.replace(/^https?:\/\//, '');
+    let result = null;
+    
+    if (cleanUrl.includes("instagram") || cleanUrl.includes("facebook")) {
+      const match = cleanUrl.match(/(?:www\.)?(?:facebook|instagram)\.com\/([^\/?]+)/);
+      result = match && match[1] ? match[1] : null;
+    } else {
+      const match = cleanUrl.match(/^([^\/?]+)/);
+      result = match && match[1] ? match[1] : cleanUrl || null;
+    }
+    
+    // Cache o resultado
+    CACHE.processedUrls.set(cacheKey, result);
+    
+    // Log apenas em caso de erro
+    if (!result) {
+      Logger.log(`Rádio ${row[7]} ${row[8]}: URL inválido ou não encontrado.`);
+    }
+    
+    return result;
+  } catch (error) {
+    Logger.log(`Erro ao processar URL: ${error}`);
+    return null;
+  }
+}
+
+// Otimização: usar objetos pré-construídos para evitar recriação
+function propertieSelect(row, index) {
+  const value = row[index];
+  return value ? { "select": { "name": String(value) } } : { "select": null };
+}
+
+function propertieRichTextCaixaComercial(row, index) {
+  const value = row[index];
+  
+  if (!value || value <= 0) {
+    return { "rich_text": [{ "text": { "content": "" } }] };
+  }
+  
+  return { "rich_text": [{ "text": { "content": `${value} min` } }] };
+}
+
+function propertieTittle(row, index) {
+  return { "title": [{ "text": { "content": String(row[index] || '') } }] };
+}
+
+function propertieNumber(row, index) {
+  const value = row[index];
+  return { "number": value ? Number(value) : null };
+}
+
+function propertieRichText(row, index) {
+  return { "rich_text": [{ "text": { "content": String(row[index] || '') } }] };
+}
+
+function propertieRichTextAndAnnotation(row, index, cor) {
+  return {
+    "rich_text": [{
+      "text": { "content": String(row[index] || '') },
+      "annotations": { "bold": true, "color": cor }
+    }]
+  };
+}
+
+function propertieMultiSelect(row, index) {
+  const value = row[index];
+  
+  if (!value || String(value).trim() === "") {
+    return { "multi_select": [] };
+  }
+  
+  // Otimização: processar uma única vez
+  const values = String(value)
+    .split(',')
+    .map(item => item.trim())
+    .filter(item => item) // Remove itens vazios
+    .map(value => ({ "name": value }));
+  
+  return { "multi_select": values };
+}
+
+// Função para limpar cache quando necessário (opcional)
+function clearCache() {
+  CACHE.fileIds.clear();
+  CACHE.processedUrls.clear();
+  CACHE.dateTime = null;
+  CACHE.dateTimeExpiry = 0;
+}
