@@ -1,0 +1,293 @@
+// Configurações otimizadas para atualização de páginas
+const PAGE_UPDATE_CONFIG = {
+  apiVersion: "2022-06-28",
+  baseUrl: "https://api.notion.com/v1/pages",
+  maxRetries: 3,
+  retryDelay: 1000
+};
+
+// Cache para evitar reprocessamento
+const PAGE_CACHE = {
+  icons: new Map(),
+  lastUpdate: new Map()
+};
+
+/**
+ * Função otimizada para atualizar nome e ícone da página
+ * @param {string} pageId - ID da página no Notion
+ * @param {Array} values - Array com os dados da linha
+ * @param {string} token - Token de autorização do Notion
+ */
+function updatePageNameAndIcon(pageId, values, token) {
+  // Validações otimizadas
+  if (!pageId || !values || !token) {
+    Logger.log("Parametros invalidos para update de pagina");
+    return false;
+  }
+
+  // Verificar se já foi atualizada recentemente (cache de 5 minutos)
+  const cacheKey = `${pageId}_${values[34]}_${values[32]}`;
+  const now = Date.now();
+  const lastUpdate = PAGE_CACHE.lastUpdate.get(cacheKey);
+  
+  if (lastUpdate && (now - lastUpdate) < 300000) { // 5 minutos
+    Logger.log(`Pagina ${pageId} ja atualizada recentemente`);
+    return true;
+  }
+
+  try {
+    // Preparar dados otimizados
+    const updateData = preparePageUpdateData(values);
+    
+    if (!updateData.title) {
+      Logger.log("Nome da pagina nao pode ser determinado");
+      return false;
+    }
+
+    // Construir payload de forma otimizada
+    const payload = buildUpdatePayload(updateData);
+    
+    // Executar atualização com retry
+    const success = executePageUpdate(pageId, token, payload);
+    
+    if (success) {
+      // Atualizar cache
+      PAGE_CACHE.lastUpdate.set(cacheKey, now);
+      Logger.log(`Pagina atualizada com sucesso: ${updateData.title}`);
+    }
+    
+    return success;
+    
+  } catch (error) {
+    Logger.log(`Erro ao atualizar pagina ${pageId}: ${error}`);
+    return false;
+  }
+}
+
+/**
+ * Função para preparar dados de atualização
+ */
+function preparePageUpdateData(values) {
+  // Extrair e limpar nome
+  const rawName = values[34];
+  const cleanName = removeEspacosExtras(rawName) || 'Sem nome';
+  const timestamp = dateTimeFunction();
+  const title = `${cleanName} (${timestamp})`;
+  
+  // Processar URL do cliente para ícone
+  const clientUrl = values[32];
+  let iconUrl = null;
+  
+  if (clientUrl) {
+    // Verificar cache primeiro
+    if (PAGE_CACHE.icons.has(clientUrl)) {
+      iconUrl = PAGE_CACHE.icons.get(clientUrl);
+    } else {
+      iconUrl = createPageIcon(clientUrl);
+      if (iconUrl) {
+        PAGE_CACHE.icons.set(clientUrl, iconUrl);
+      }
+    }
+  }
+  
+  return {
+    title: title,
+    iconUrl: iconUrl,
+    clientUrl: clientUrl
+  };
+}
+
+/**
+ * Função para construir payload otimizado
+ */
+function buildUpdatePayload(updateData) {
+  const payload = {
+    properties: {
+      title: [{
+        text: {
+          content: updateData.title
+        }
+      }]
+    }
+  };
+  
+  // Adicionar ícone apenas se válido
+  if (updateData.iconUrl && updateData.iconUrl.length > 0) {
+    payload.icon = {
+      type: "external",
+      external: {
+        url: updateData.iconUrl
+      }
+    };
+  }
+  
+  return payload;
+}
+
+/**
+ * Função para executar atualização com retry
+ */
+function executePageUpdate(pageId, token, payload) {
+  const url = `${PAGE_UPDATE_CONFIG.baseUrl}/${pageId}`;
+  
+  const options = {
+    method: "PATCH",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "Notion-Version": PAGE_UPDATE_CONFIG.apiVersion
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+  
+  // Implementar retry para maior robustez
+  for (let attempt = 1; attempt <= PAGE_UPDATE_CONFIG.maxRetries; attempt++) {
+    try {
+      const response = UrlFetchApp.fetch(url, options);
+      const statusCode = response.getResponseCode();
+      const responseBody = response.getContentText();
+      
+      if (statusCode === 200) {
+        return true;
+      }
+      
+      // Log detalhado apenas no último erro
+      if (attempt === PAGE_UPDATE_CONFIG.maxRetries) {
+        Logger.log(`Erro final ao atualizar pagina: Codigo ${statusCode}`);
+        Logger.log(`Resposta do servidor: ${responseBody}`);
+      }
+      
+      // Retry para erros temporários (rate limit, timeout, etc.)
+      if (statusCode === 429 || statusCode >= 500) {
+        if (attempt < PAGE_UPDATE_CONFIG.maxRetries) {
+          const delay = PAGE_UPDATE_CONFIG.retryDelay * attempt;
+          Logger.log(`Tentativa ${attempt} falhada. Tentando novamente em ${delay}ms`);
+          Utilities.sleep(delay);
+          continue;
+        }
+      }
+      
+      // Erro não recuperável
+      return false;
+      
+    } catch (error) {
+      if (attempt === PAGE_UPDATE_CONFIG.maxRetries) {
+        Logger.log(`Erro de conexao na tentativa ${attempt}: ${error}`);
+        return false;
+      }
+      
+      // Esperar antes de tentar novamente
+      Utilities.sleep(PAGE_UPDATE_CONFIG.retryDelay * attempt);
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Função otimizada para atualização em lote
+ * @param {Array} pageIds - Array de IDs das páginas
+ * @param {Array} values - Dados para atualização
+ * @param {string} token - Token do Notion
+ */
+function updateMultiplePagesOptimized(pageIds, values, token) {
+  if (!pageIds || !Array.isArray(pageIds) || pageIds.length === 0) {
+    Logger.log("Lista de paginas invalida");
+    return false;
+  }
+  
+  let successCount = 0;
+  const totalPages = pageIds.length;
+  
+  Logger.log(`Iniciando atualizacao de ${totalPages} paginas`);
+  
+  pageIds.forEach((pageId, index) => {
+    try {
+      const success = updatePageNameAndIcon(pageId, values, token);
+      if (success) {
+        successCount++;
+      }
+      
+      // Delay entre atualizações para evitar rate limit
+      if (index < pageIds.length - 1) {
+        Utilities.sleep(250);
+      }
+      
+      // Log de progresso a cada 5 páginas
+      if ((index + 1) % 5 === 0 || index === pageIds.length - 1) {
+        Logger.log(`Progresso: ${index + 1}/${totalPages} paginas processadas`);
+      }
+      
+    } catch (error) {
+      Logger.log(`Erro ao processar pagina ${pageId}: ${error}`);
+    }
+  });
+  
+  Logger.log(`Atualizacao completa: ${successCount}/${totalPages} paginas atualizadas`);
+  return successCount === totalPages;
+}
+
+/**
+ * Função para validar se uma página existe
+ * @param {string} pageId - ID da página
+ * @param {string} token - Token do Notion
+ */
+function validatePageExists(pageId, token) {
+  if (!pageId || !token) return false;
+  
+  try {
+    const response = UrlFetchApp.fetch(`${PAGE_UPDATE_CONFIG.baseUrl}/${pageId}`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Notion-Version": PAGE_UPDATE_CONFIG.apiVersion
+      },
+      muteHttpExceptions: true
+    });
+    
+    return response.getResponseCode() === 200;
+    
+  } catch (error) {
+    Logger.log(`Erro ao validar pagina ${pageId}: ${error}`);
+    return false;
+  }
+}
+
+/**
+ * Função para limpar cache de páginas
+ */
+function clearPageCache() {
+  PAGE_CACHE.icons.clear();
+  PAGE_CACHE.lastUpdate.clear();
+  Logger.log("Cache de paginas limpo");
+}
+
+/**
+ * Função de diagnóstico para páginas
+ */
+function diagnosePageOperations(pageIds, token) {
+  if (!pageIds || !Array.isArray(pageIds)) {
+    Logger.log("Lista de paginas invalida para diagnostico");
+    return;
+  }
+  
+  Logger.log("=== DIAGNOSTICO DE PAGINAS ===");
+  Logger.log(`Total de paginas: ${pageIds.length}`);
+  
+  pageIds.forEach((pageId, index) => {
+    const exists = validatePageExists(pageId, token);
+    Logger.log(`Pagina ${index + 1}: ${pageId} - ${exists ? 'Existe' : 'Nao encontrada'}`);
+  });
+  
+  Logger.log(`Cache de icones: ${PAGE_CACHE.icons.size} entradas`);
+  Logger.log(`Cache de atualizacoes: ${PAGE_CACHE.lastUpdate.size} entradas`);
+  Logger.log("==============================");
+}
+
+/**
+ * Função wrapper para manter compatibilidade com código existente
+ */
+function updatePageNameAndIconLegacy(pageId, values, token) {
+  return updatePageNameAndIcon(pageId, values, token);
+}
