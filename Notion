@@ -295,7 +295,7 @@ function getNotionDatabasePropertiesFull(databaseId, token) {
   }
 }
 
-// Função otimizada para construir propriedades Single Media
+// FUNÇÃO MODIFICADA: Usando nova função propertieCobertura para o campo "Cobertura"
 function buildPropertiesSingleMedia(row, dbProps) {
   const columnMap = {
     "ID": [propertieRichText, 0],
@@ -324,7 +324,7 @@ function buildPropertiesSingleMedia(row, dbProps) {
     "Classe AB": [propertieNumber, 37],
     "Classe C": [propertieNumber, 38],
     "Classe DE": [propertieNumber, 39],
-    "Cobertura": [propertieMultiSelect, 40],
+    "Cobertura": [propertieCobertura, 40], // MUDANÇA: Agora usa propertieCobertura
     "Data inicio": [propertieDate, "next_month_start"],
     "Data fim": [propertieDate, "next_month_end"], 
     "Dias da semana": [propertieWeekdays, "weekdays"]
@@ -347,7 +347,7 @@ function buildPropertiesSingleMedia(row, dbProps) {
   return properties;
 }
 
-// Função otimizada para construir propriedades Sponsorship
+// FUNÇÃO MODIFICADA: Agora com tratamento especial para campo "Cobertura"
 function buildPropertiesSponsorship(row, headers, schema) {
   const properties = {};
   
@@ -382,6 +382,12 @@ function buildPropertiesSponsorship(row, headers, schema) {
     const value = row[colIndex];
     if (value === undefined || value === null || String(value).trim() === "") return;
 
+    // TRATAMENTO ESPECIAL para campo "Cobertura"
+    if (propName === "Cobertura") {
+      properties[propName] = propertieCobertura(row, colIndex);
+      return;
+    }
+
     // Criar propriedade baseada no tipo
     properties[propName] = createPropertyByType(field.type, value, propName);
   });
@@ -389,7 +395,7 @@ function buildPropertiesSponsorship(row, headers, schema) {
   return properties;
 }
 
-// Função auxiliar para criar propriedades por tipo
+// FUNÇÃO MODIFICADA: Agora com truncamento para textos longos
 function createPropertyByType(type, value, propName) {
   const annotations = getAnnotationsByProperty(propName);
   
@@ -397,9 +403,11 @@ function createPropertyByType(type, value, propName) {
     case "title":
       return { title: [{ text: { content: String(value) } }] };
     case "rich_text":
+      // Aplicar truncamento para rich_text
+      const content = truncateText(String(value), 2000);
       return { 
         rich_text: [{
-          text: { content: String(value) },
+          text: { content: content },
           annotations: annotations
         }]
       };
@@ -408,8 +416,11 @@ function createPropertyByType(type, value, propName) {
     case "select":
       return { select: { name: String(value) } };
     case "multi_select":
+      // Aplicar truncamento para multi_select se necessário
+      const multiValue = String(value);
+      const truncatedMulti = multiValue.length > 1900 ? truncateText(multiValue, 1900) : multiValue;
       return {
-        multi_select: String(value).split(",").map(v => ({ name: v.trim() }))
+        multi_select: truncatedMulti.split(",").map(v => ({ name: v.trim() }))
       };
     case "date":
       return { date: { start: String(value) } };
@@ -418,7 +429,9 @@ function createPropertyByType(type, value, propName) {
     case "url":
       return { url: String(value) };
     default:
-      return { rich_text: [{ text: { content: String(value) } }] };
+      // Para tipos desconhecidos, usar rich_text com truncamento
+      const defaultContent = truncateText(String(value), 2000);
+      return { rich_text: [{ text: { content: defaultContent } }] };
   }
 }
 
