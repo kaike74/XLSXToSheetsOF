@@ -295,10 +295,12 @@ function getNotionDatabasePropertiesFull(databaseId, token) {
   }
 }
 
-// FUNÇÃO MODIFICADA: Usando nova função propertieCobertura para o campo "Cobertura"
+// FUNÇÃO CORRIGIDA: Agora inclui Longitude (coluna C=2) e Latitude (coluna D=3)
 function buildPropertiesSingleMedia(row, dbProps) {
   const columnMap = {
     "ID": [propertieRichText, 0],
+    "Longitude": [propertieRichText, 2], // ADICIONADO: Coluna C = índice 2
+    "Latitude": [propertieRichText, 3],  // ADICIONADO: Coluna D = índice 3
     "Região": [propertieSelect, 4],
     "Mesorregião": [propertieRichText, 5],
     "UF": [propertieRichText, 6],
@@ -324,7 +326,7 @@ function buildPropertiesSingleMedia(row, dbProps) {
     "Classe AB": [propertieNumber, 37],
     "Classe C": [propertieNumber, 38],
     "Classe DE": [propertieNumber, 39],
-    "Cobertura": [propertieCobertura, 40], // MUDANÇA: Agora usa propertieCobertura
+    "Cobertura": [propertieCobertura, 40],
     "Data inicio": [propertieDate, "next_month_start"],
     "Data fim": [propertieDate, "next_month_end"], 
     "Dias da semana": [propertieWeekdays, "weekdays"]
@@ -347,13 +349,11 @@ function buildPropertiesSingleMedia(row, dbProps) {
   return properties;
 }
 
-// FUNÇÃO MODIFICADA: Agora com tratamento especial para campo "Cobertura"
+// FUNÇÃO CORRIGIDA: Agora também trata Longitude e Latitude no modo Patrocínio
 function buildPropertiesSponsorship(row, headers, schema) {
   const properties = {};
   
   Object.keys(schema).forEach(propName => {
-    const field = schema[propName];
-
     // Campos calculados automaticamente
     if (propName === "Data inicio") {
       const dates = getNextMonthDates();
@@ -376,6 +376,23 @@ function buildPropertiesSponsorship(row, headers, schema) {
       return;
     }
 
+    // MAPEAMENTO DIRETO para coordenadas (não depende do header)
+    if (propName === "Longitude") {
+      const value = row[2]; // Coluna C
+      if (value !== undefined && value !== null && String(value).trim() !== "") {
+        properties[propName] = { number: Number(value) };
+      }
+      return;
+    }
+    
+    if (propName === "Latitude") {
+      const value = row[3]; // Coluna D
+      if (value !== undefined && value !== null && String(value).trim() !== "") {
+        properties[propName] = { number: Number(value) };
+      }
+      return;
+    }
+
     const colIndex = headers.indexOf(propName);
     if (colIndex === -1) return;
 
@@ -389,7 +406,7 @@ function buildPropertiesSponsorship(row, headers, schema) {
     }
 
     // Criar propriedade baseada no tipo
-    properties[propName] = createPropertyByType(field.type, value, propName);
+    properties[propName] = createPropertyByType(schema[propName].type, value, propName);
   });
 
   return properties;
