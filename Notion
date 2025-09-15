@@ -329,7 +329,8 @@ function buildPropertiesSingleMedia(row, dbProps) {
     "Cobertura": [propertieCobertura, 40],
     "Data inicio": [propertieDate, "next_month_start"],
     "Data fim": [propertieDate, "next_month_end"], 
-    "Dias da semana": [propertieWeekdays, "weekdays"]
+    "Dias da semana": [propertieWeekdays, "weekdays"],
+    "KML": [propertieRichText, 41],
   };
 
   const properties = {};
