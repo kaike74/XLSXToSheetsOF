@@ -13,6 +13,29 @@ const SIGNATURE_COVER = '9b91074fbffb5c9c28db76c102ad644c0114e92ce5950732557d911
 const VERSION_RADIOS = '1.002203';
 const VERSION_CLIENTES = '1.001749';
 
+// NOVA FUNÇÃO: Truncamento inteligente para textos longos
+function truncateText(text, maxLength = 2000) {
+  if (!text || typeof text !== 'string') return '';
+  
+  // Se o texto é menor que o limite, retorna como está
+  if (text.length <= maxLength) return text;
+  
+  // Reserva espaço para o indicador de truncamento
+  const truncateIndicator = "... [TEXTO TRUNCADO - Ver site para conteúdo completo]";
+  const availableLength = maxLength - truncateIndicator.length;
+  
+  // Tenta cortar em uma quebra de palavra para não cortar no meio
+  let truncated = text.substring(0, availableLength);
+  const lastSpaceIndex = truncated.lastIndexOf(' ');
+  
+  // Se encontrou um espaço nos últimos 50 caracteres, corta ali
+  if (lastSpaceIndex > availableLength - 50) {
+    truncated = truncated.substring(0, lastSpaceIndex);
+  }
+  
+  return truncated + truncateIndicator;
+}
+
 function getNotionDataBaseId(url) {
   // Cache para URLs já processadas
   if (CACHE.processedUrls.has(url)) {
@@ -185,19 +208,32 @@ function propertieNumber(row, index) {
   return { "number": value ? Number(value) : null };
 }
 
+// FUNÇÃO MODIFICADA: Agora com truncamento para textos longos
 function propertieRichText(row, index) {
-  return { "rich_text": [{ "text": { "content": String(row[index] || '') } }] };
+  let content = String(row[index] || '');
+  
+  // Aplicar truncamento se o texto for muito longo
+  content = truncateText(content, 2000);
+  
+  return { "rich_text": [{ "text": { "content": content } }] };
 }
 
+// FUNÇÃO MODIFICADA: Agora com truncamento para textos longos
 function propertieRichTextAndAnnotation(row, index, cor) {
+  let content = String(row[index] || '');
+  
+  // Aplicar truncamento se o texto for muito longo
+  content = truncateText(content, 2000);
+  
   return {
     "rich_text": [{
-      "text": { "content": String(row[index] || '') },
+      "text": { "content": content },
       "annotations": { "bold": true, "color": cor }
     }]
   };
 }
 
+// FUNÇÃO MODIFICADA: Agora com truncamento para multi-select com textos longos
 function propertieMultiSelect(row, index) {
   const value = row[index];
   
@@ -205,14 +241,40 @@ function propertieMultiSelect(row, index) {
     return { "multi_select": [] };
   }
   
+  // Converter para string e verificar se é muito longo
+  let stringValue = String(value);
+  
+  // Se o valor total for muito longo, truncar antes de processar
+  if (stringValue.length > 1900) { // Margem de segurança para multi-select
+    stringValue = truncateText(stringValue, 1900);
+  }
+  
   // Otimização: processar uma única vez
-  const values = String(value)
+  const values = stringValue
     .split(',')
     .map(item => item.trim())
     .filter(item => item) // Remove itens vazios
-    .map(value => ({ "name": value }));
+    .map(value => {
+      // Cada item do multi-select também tem limite
+      const truncatedValue = value.length > 100 ? value.substring(0, 97) + "..." : value;
+      return { "name": truncatedValue };
+    });
   
   return { "multi_select": values };
+}
+
+// NOVA FUNÇÃO: Específica para campo Cobertura (pode ser rich_text ou multi_select)
+function propertieCobertura(row, index) {
+  const value = row[index];
+  
+  if (!value || String(value).trim() === "") {
+    return { "rich_text": [{ "text": { "content": "" } }] };
+  }
+  
+  // Sempre trata como rich_text e aplica truncamento
+  const content = truncateText(String(value), 2000);
+  
+  return { "rich_text": [{ "text": { "content": content } }] };
 }
 
 // Função para limpar cache quando necessário (opcional)
