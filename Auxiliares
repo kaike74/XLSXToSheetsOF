@@ -263,18 +263,16 @@ function propertieMultiSelect(row, index) {
   return { "multi_select": values };
 }
 
-// NOVA FUNÇÃO: Específica para campo Cobertura (pode ser rich_text ou multi_select)
+// FUNÇÃO MODIFICADA: Específica para campo Cobertura (agora será um placeholder)
 function propertieCobertura(row, index) {
-  const value = row[index];
-  
-  if (!value || String(value).trim() === "") {
-    return { "rich_text": [{ "text": { "content": "" } }] };
-  }
-  
-  // Sempre trata como rich_text e aplica truncamento
-  const content = truncateText(String(value), 2000);
-  
-  return { "rich_text": [{ "text": { "content": content } }] };
+  // Placeholder temporário - será substituído pelo link do mapa de cobertura
+  return { 
+    "rich_text": [{ 
+      "text": { 
+        "content": "🗺️ Carregando mapa de cobertura..." 
+      } 
+    }] 
+  };
 }
 
 // Função para limpar cache quando necessário (opcional)
