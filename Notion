@@ -668,59 +668,12 @@ function addLinkToNotionPageOptimized(urlApi, row, index, token) {
   }
 }
 
-// FUNÇÃO NOVA: Atualiza AMBOS os links (Distribuição + Cobertura)
+// FUNÇÃO SIMPLIFICADA: Compatível, mas não atualiza links (agora feitos por fórmula)
 function updatePageWithDistributionAndCoverageLinksOptimized(pageId, token) {
-  const cleanUuid = pageId.replace(/-/g, '');
-  
-  // URLs dos dois sistemas
-  const calendarUrl = `https://distribuicaoemidias.netlify.app/?id=${cleanUuid}`;
-  const coberturaUrl = `https://cobertura-radios.netlify.app/?id=${cleanUuid}`;
-  
-  const payload = {
-    properties: {
-      // Link de Distribuição (mantém o original)
-      "Distribuição": {
-        rich_text: [{
-          type: "text",
-          text: { content: "Acesse a distribuição", link: { url: calendarUrl } },
-          annotations: { bold: true, color: "blue" }
-        }]
-      },
-      
-      // NOVO: Link de Cobertura (substitui o texto longo)
-      "Cobertura": {
-        rich_text: [{
-          type: "text",
-          text: { content: "Ver mapa de cobertura completo", link: { url: coberturaUrl } },
-          annotations: { bold: true, color: "red" }
-        }]
-      }
-    }
-  };
-
-  try {
-    const response = UrlFetchApp.fetch(`${NOTION_CONFIG.baseUrl}/pages/${pageId}`, {
-      method: "patch",
-      headers: {
-        ...NOTION_CONFIG.headers,
-        "Authorization": `Bearer ${token}`
-      },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    });
-    
-    if (response.getResponseCode() === 200) {
-      Logger.log(`✅ Links atualizados para página ${pageId}`);
-      Logger.log(`🔗 Distribuição: ${calendarUrl}`);
-      Logger.log(`🗺️ Cobertura: ${coberturaUrl}`);
-    } else {
-      Logger.log(`⚠️ Erro ao atualizar links: ${response.getContentText()}`);
-    }
-    
-  } catch (error) {
-    Logger.log(`Erro ao adicionar links: ${error}`);
-  }
+  // A função foi mantida para compatibilidade, mas não altera nada
+  Logger.log(`⚠️ updatePageWithDistributionAndCoverageLinksOptimized chamada para a página ${pageId}, mas os links agora são gerados por fórmulas.`);
 }
+
 
 // FUNÇÃO MANTIDA PARA COMPATIBILIDADE (chama a nova função)
 function updatePageWithDistributionLinkOptimized(pageId, token) {
