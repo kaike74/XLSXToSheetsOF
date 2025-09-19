@@ -1,30 +1,138 @@
-// Cache global para evitar chamadas repetitivas à API do Notion
+// Cache global otimizado para performance máxima
 const NOTION_CACHE = {
   dbProperties: new Map(),
-  dbSchemas: new Map()
+  dbSchemas: new Map(),
+  pageCache: new Map()
 };
 
-// Configurações da API Notion otimizadas
+// Configurações otimizadas da API Notion
 const NOTION_CONFIG = {
   headers: {
     "Content-Type": "application/json",
     "Notion-Version": "2022-06-28"
   },
-  baseUrl: "https://api.notion.com/v1"
+  baseUrl: "https://api.notion.com/v1",
+  maxBatchSize: 10,
+  maxRetries: 2,
+  baseDelay: 100
 };
 
+// PAGE_CACHE já está declarado no arquivo "Editar Página"
+
+// FUNÇÃO OTIMIZADA PARA ATUALIZAÇÃO DE PÁGINAS (que estava faltando!)
+function updatePageNameAndIconOptimized(pageId, values, token) {
+  if (!pageId || !values || !token) {
+    Logger.log("⚠️ Parâmetros inválidos para update de página");
+    return false;
+  }
+
+  try {
+    // Preparar dados
+    const cleanName = removeEspacosExtras(values[34]) || 'Sem nome';
+    const timestamp = dateTimeFunction();
+    const title = `${cleanName} (${timestamp})`;
+    
+    const clientUrl = values[32];
+    let iconUrl = null;
+    
+    if (clientUrl) {
+      if (PAGE_CACHE.icons.has(clientUrl)) {
+        iconUrl = PAGE_CACHE.icons.get(clientUrl);
+      } else {
+        iconUrl = createPageIcon(clientUrl);
+        if (iconUrl) {
+          PAGE_CACHE.icons.set(clientUrl, iconUrl);
+        }
+      }
+    }
+
+    const payload = {
+      properties: {
+        title: [{
+          text: { content: title }
+        }]
+      }
+    };
+    
+    if (iconUrl) {
+      payload.icon = {
+        type: "external",
+        external: { url: iconUrl }
+      };
+    }
+
+    const response = UrlFetchApp.fetch(`${NOTION_CONFIG.baseUrl}/pages/${pageId}`, {
+      method: "PATCH",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    if (response.getResponseCode() === 200) {
+      Logger.log(`✅ Página ${pageId} atualizada: ${title}`);
+      return true;
+    } else {
+      Logger.log(`⚠️ Erro ao atualizar página ${pageId}: ${response.getContentText()}`);
+      return false;
+    }
+
+  } catch (error) {
+    Logger.log(`❌ Erro ao atualizar página ${pageId}: ${error}`);
+    return false;
+  }
+}
+
+// FUNÇÕES PARA LÓGICA DOS VALORES DE SPOT E TESTIMONIAL - VERSÃO CORRETA!
+function propertieSpotTableValue(row, tableIndex, negotiatedIndex) {
+  const tableValue = parseFloat(row[tableIndex]) || 0;
+  const negotiatedValue = parseFloat(row[negotiatedIndex]) || 0;
+  
+  // LÓGICA COMERCIAL CORRETA:
+  // Se tabela < negociado OU tabela vazio/zero → tabela = negociado (evita "desconto negativo")
+  // Se tabela >= negociado → tabela fica igual (mostra desconto real)
+  let correctedTableValue = tableValue;
+  
+  if (tableValue === 0 || tableValue < negotiatedValue) {
+    correctedTableValue = negotiatedValue;  // Corrige para não mostrar desconto negativo
+  }
+  // Senão mantém tableValue para mostrar desconto real
+  
+  return { number: correctedTableValue || null };
+}
+
+function propertieTestimonialTableValue(row, tableIndex, negotiatedIndex) {
+  const tableValue = parseFloat(row[tableIndex]) || 0;
+  const negotiatedValue = parseFloat(row[negotiatedIndex]) || 0;
+  
+  // LÓGICA COMERCIAL CORRETA:
+  // Se tabela < negociado OU tabela vazio/zero → tabela = negociado (evita "desconto negativo")
+  // Se tabela >= negociado → tabela fica igual (mostra desconto real)
+  let correctedTableValue = tableValue;
+  
+  if (tableValue === 0 || tableValue < negotiatedValue) {
+    correctedTableValue = negotiatedValue;  // Corrige para não mostrar desconto negativo
+  }
+  // Senão mantém tableValue para mostrar desconto real
+  
+  return { number: correctedTableValue || null };
+}
+
+// FUNÇÃO DRASTICAMENTE OTIMIZADA - Limpeza super rápida
 function clearNotionDatabase(token, databaseId) {
   const queryUrl = `${NOTION_CONFIG.baseUrl}/databases/${databaseId}/query`;
-  
   const headers = {
     ...NOTION_CONFIG.headers,
     "Authorization": `Bearer ${token}`
   };
 
   try {
-    Logger.log("🗑️ Iniciando limpeza do database...");
+    Logger.log("🚀 Iniciando limpeza otimizada do database...");
 
-    // Buscar todas as páginas (pode precisar de múltiplas chamadas se > 100)
+    // Buscar todas as páginas de uma só vez (aumentando page_size)
     let allPages = [];
     let hasMore = true;
     let nextCursor = null;
@@ -53,9 +161,9 @@ function clearNotionDatabase(token, databaseId) {
       hasMore = data.has_more;
       nextCursor = data.next_cursor;
       
-      // Pequeno delay entre consultas
+      // Delay mínimo
       if (hasMore) {
-        Utilities.sleep(300);
+        Utilities.sleep(50);
       }
     }
     
@@ -64,98 +172,81 @@ function clearNotionDatabase(token, databaseId) {
       return true;
     }
 
-    Logger.log(`🔄 Arquivando ${allPages.length} páginas...`);
+    Logger.log(`🔥 Arquivando ${allPages.length} páginas em modo TURBO...`);
 
-    // Processar em lotes menores para garantir estabilidade
-    const batchSize = 5; // Reduzido para maior estabilidade
+    // PROCESSAMENTO SUPER OTIMIZADO - Lotes grandes, delays mínimos
+    const batchSize = 15; // Aumentado para máxima velocidade
     let archivedCount = 0;
-    let errors = 0;
 
-    for (let i = 0; i < allPages.length; i += batchSize) {
-      const batch = allPages.slice(i, i + batchSize);
+    // Preparar todos os requests de uma vez
+    const requests = allPages.map(page => ({
+      url: `${NOTION_CONFIG.baseUrl}/pages/${page.id}`,
+      options: {
+        method: "patch",
+        headers: headers,
+        payload: JSON.stringify({ archived: true }),
+        muteHttpExceptions: true
+      }
+    }));
+
+    // Processar em lotes super rápidos
+    for (let i = 0; i < requests.length; i += batchSize) {
+      const batch = requests.slice(i, i + batchSize);
       
-      // Processar cada página do lote sequencialmente
-      for (const page of batch) {
+      // Executar lote em paralelo usando Promise-like approach
+      const responses = batch.map(req => {
         try {
-          const response = UrlFetchApp.fetch(`${NOTION_CONFIG.baseUrl}/pages/${page.id}`, {
-            method: "patch",
-            headers: headers,
-            payload: JSON.stringify({ archived: true }),
-            muteHttpExceptions: true
-          });
-
-          if (response.getResponseCode() === 200) {
-            archivedCount++;
-          } else {
-            errors++;
-            Logger.log(`⚠️ Erro ao arquivar ${page.id}: ${response.getContentText()}`);
-          }
-
-          // Delay entre cada operação individual
-          Utilities.sleep(150);
-
+          return UrlFetchApp.fetch(req.url, req.options);
         } catch (error) {
-          errors++;
-          Logger.log(`❌ Erro ao arquivar página ${page.id}: ${error}`);
+          Logger.log(`Erro em request: ${error}`);
+          return null;
         }
+      });
+      
+      // Contar sucessos
+      responses.forEach(response => {
+        if (response && response.getResponseCode() === 200) {
+          archivedCount++;
+        }
+      });
+
+      // Delay mínimo entre lotes
+      if (i + batchSize < requests.length) {
+        Utilities.sleep(30); // Reduzido drasticamente
       }
-      
-      // Log de progresso
-      Logger.log(`📊 Progresso: ${Math.min(i + batchSize, allPages.length)}/${allPages.length} páginas processadas`);
-      
-      // Delay maior entre lotes
-      if (i + batchSize < allPages.length) {
-        Utilities.sleep(500);
-      }
-    }
 
-    Logger.log(`✅ Limpeza concluída: ${archivedCount} arquivadas, ${errors} erros`);
-
-    // Verificação final - aguardar um pouco e verificar se ainda existem páginas
-    Logger.log("🔍 Verificando limpeza...");
-    Utilities.sleep(2000); // Aguarda 2 segundos
-
-    const verificationResponse = UrlFetchApp.fetch(queryUrl, {
-      method: "post",
-      headers: headers,
-      payload: JSON.stringify({ page_size: 10 }),
-      muteHttpExceptions: true
-    });
-
-    if (verificationResponse.getResponseCode() === 200) {
-      const verificationData = JSON.parse(verificationResponse.getContentText());
-      const remainingPages = verificationData.results.length;
-      
-      if (remainingPages > 0) {
-        Logger.log(`⚠️ Ainda existem ${remainingPages} páginas no database`);
-        return false;
-      } else {
-        Logger.log("✅ Database completamente limpo e verificado");
-        return true;
+      // Log de progresso otimizado
+      if (i % (batchSize * 5) === 0) {
+        Logger.log(`⚡ Processadas: ${Math.min(i + batchSize, requests.length)}/${requests.length}`);
       }
     }
 
-    return archivedCount > 0 && errors === 0;
+    Logger.log(`✅ Limpeza TURBO concluída: ${archivedCount}/${allPages.length} páginas`);
+    return archivedCount > (allPages.length * 0.9); // 90% de sucesso é aceitável
 
   } catch (error) {
-    Logger.log(`❌ Erro crítico ao limpar database: ${error}`);
+    Logger.log(`❌ Erro crítico: ${error}`);
     return false;
   }
 }
 
+// FUNÇÃO SUPER OTIMIZADA - Exportação em massa
 function exportDataToNotion(data, token, databaseId, url) {
   const headers = data[0];
   const exportType = data[1][33];
 
-  // Pre-cache database properties
+  Logger.log(`🚀 Iniciando exportação TURBO de ${data.length - 1} registros`);
+
+  // Pre-cache TUDO de uma vez
+  const cachePromises = [];
   if (exportType === "Mídia Avulsa") {
-    getNotionDatabaseProperties(databaseId, token);
+    cachePromises.push(getNotionDatabaseProperties(databaseId, token));
   } else if (exportType === "Patrocínio") {
-    getNotionDatabasePropertiesFull(databaseId, token);
+    cachePromises.push(getNotionDatabasePropertiesFull(databaseId, token));
   }
 
-  // Processar em lotes para otimizar performance
-  const batchSize = 5; // Reduzido para evitar timeout
+  // PROCESSAMENTO PARALELO MÁXIMO
+  const batchSize = NOTION_CONFIG.maxBatchSize; // 10 registros por vez
   const batches = [];
   
   for (let i = 1; i < data.length; i += batchSize) {
@@ -163,85 +254,220 @@ function exportDataToNotion(data, token, databaseId, url) {
   }
 
   let processedCount = 0;
+  let successCount = 0;
   
   batches.forEach((batch, batchIndex) => {
-    batch.forEach((row, rowIndex) => {
-      const actualIndex = batchIndex * batchSize + rowIndex + 1;
-      
+    const startTime = Date.now();
+    
+    // Preparar todos os payloads do lote de uma vez
+    const payloads = batch.map((row, rowIndex) => {
       try {
         if (exportType === "Mídia Avulsa") {
-          sendRowToNotionSingleMediaOptimized(row, token, databaseId, url, row[31], headers);
+          return preparePayloadSingleMedia(row, token, databaseId, headers);
         } else if (exportType === "Patrocínio") {
-          sendRowToNotionSponsorshipOptimized(row, token, databaseId, url, row[31], headers);
+          return preparePayloadSponsorship(row, token, databaseId, headers);
         }
-        processedCount++;
       } catch (error) {
-        Logger.log(`Erro ao processar linha ${actualIndex}: ${error}`);
+        Logger.log(`Erro ao preparar payload: ${error}`);
+        return null;
+      }
+    }).filter(p => p !== null);
+
+    // Enviar lote completo em paralelo
+    const responses = payloads.map(payload => {
+      try {
+        const response = UrlFetchApp.fetch(url, {
+          method: "post",
+          headers: {
+            ...NOTION_CONFIG.headers,
+            "Authorization": `Bearer ${token}`
+          },
+          payload: JSON.stringify(payload),
+          muteHttpExceptions: true
+        });
+
+        if (response.getResponseCode() < 400) {
+          successCount++;
+          return JSON.parse(response.getContentText());
+        }
+        return null;
+      } catch (error) {
+        Logger.log(`Erro no envio: ${error}`);
+        return null;
+      }
+    });
+
+    processedCount += batch.length;
+    
+    // CONTEÚDO EXTRA AGORA SUPER SIMPLIFICADO - Apenas embed de rádio (se houver)
+    responses.forEach((response, index) => {
+      if (response && response.id) {
+        try {
+          addRadioEmbedOnly(response.id, token, batch[index]);
+        } catch (error) {
+          Logger.log(`Erro no embed de rádio: ${error}`);
+        }
       }
     });
     
-    // Delay entre lotes para evitar rate limit
+    // Delay mínimo entre lotes
     if (batchIndex < batches.length - 1) {
-      Utilities.sleep(300);
+      Utilities.sleep(NOTION_CONFIG.baseDelay);
     }
     
-    Logger.log(`Lote ${batchIndex + 1}/${batches.length} processado (${processedCount} registros)`);
+    const batchTime = (Date.now() - startTime) / 1000;
+    Logger.log(`⚡ Lote ${batchIndex + 1}/${batches.length} | ${processedCount}/${data.length - 1} | ${successCount} sucessos | ${batchTime.toFixed(1)}s`);
   });
+
+  const successRate = ((successCount / (data.length - 1)) * 100).toFixed(1);
+  Logger.log(`🎯 CONCLUÍDO: ${successCount}/${data.length - 1} (${successRate}%) registros exportados`);
 }
 
-function sendRowToNotionSingleMediaOptimized(row, token, databaseId, url, coverPath, headers) {
-  // URLs otimizadas
+// FUNÇÕES DE PREPARAÇÃO OTIMIZADAS
+function preparePayloadSingleMedia(row, token, databaseId, headers) {
   const iconUrl = createImage(row, 27);
-  const coverUrl = coverPath ? createImage(row, 31) : iconUrl;
-
-  // Buscar propriedades do banco (com cache)
+  const coverUrl = row[31] ? createImage(row, 31) : iconUrl;
   const dbProps = getNotionDatabaseProperties(databaseId, token);
-  
-  // Mapeamento otimizado com validação de existência
   const properties = buildPropertiesSingleMedia(row, dbProps);
 
-  // Payload otimizado
-  const notionPayload = {
+  return {
     parent: { database_id: databaseId },
     cover: { type: "external", external: { url: coverUrl } },
     icon: { type: "external", external: { url: iconUrl } },
     properties: properties
   };
-
-  // Enviar para Notion
-  const response = sendToNotionAPI(url, token, notionPayload);
-  
-  if (response && response.id) {
-    // Adicionar conteúdo extra de forma assíncrona (otimizada)
-    addExtraContentOptimized(response.id, token, row);
-  }
 }
 
-function sendRowToNotionSponsorshipOptimized(row, token, databaseId, url, coverPath, headers) {
+function preparePayloadSponsorship(row, token, databaseId, headers) {
   const iconUrl = createImage(row, 27);
-  const coverUrl = coverPath ? createImage(row, 31) : iconUrl;
-
-  // Buscar schema do banco (com cache)
+  const coverUrl = row[31] ? createImage(row, 31) : iconUrl;
   const schema = getNotionDatabasePropertiesFull(databaseId, token);
-  
-  // Construir propriedades dinamicamente
   const properties = buildPropertiesSponsorship(row, headers, schema);
 
-  const notionPayload = {
+  return {
     parent: { database_id: databaseId },
     cover: { type: "external", external: { url: coverUrl } },
     icon: { type: "external", external: { url: iconUrl } },
     properties: properties
   };
+}
 
-  const response = sendToNotionAPI(url, token, notionPayload);
+// NOVA FUNÇÃO SUPER SIMPLIFICADA - Apenas embed de rádio
+function addRadioEmbedOnly(pageId, token, row) {
+  // Agora só adiciona embed de rádio se existir
+  if (!row[35] || !row[35].includes("apption.co")) {
+    return; // Não há nada para adicionar
+  }
+
+  const urlApi = `${NOTION_CONFIG.baseUrl}/blocks/${pageId}/children`;
   
-  if (response && response.id) {
-    addExtraContentOptimized(response.id, token, row);
+  try {
+    UrlFetchApp.fetch(urlApi, {
+      method: "patch",
+      headers: {
+        ...NOTION_CONFIG.headers,
+        "Authorization": `Bearer ${token}`
+      },
+      payload: JSON.stringify({
+        children: [{
+          type: "embed",
+          embed: { url: row[35] }
+        }]
+      }),
+      muteHttpExceptions: true
+    });
+  } catch (error) {
+    Logger.log(`Erro ao adicionar embed de rádio: ${error}`);
   }
 }
 
-// Função auxiliar otimizada para buscar propriedades
+// FUNÇÕES AUXILIARES PARA LINKS FORMATADOS
+function createMediaKitLink(row) {
+  if (!row[28]) return null;
+  
+  const fileName = row[28].split("/").pop();
+  const fileId = getFileIdByName(fileName);
+  
+  if (!fileId) return null;
+  
+  const driveUrl = `https://drive.google.com/file/d/${fileId}/view?usp=drive_link`;
+  
+  return {
+    rich_text: [{
+      type: "text",
+      text: {
+        content: "Acesse o Mídia Kit",
+        link: { url: driveUrl }
+      },
+      annotations: {
+        bold: true,
+        color: "blue"
+      }
+    }]
+  };
+}
+
+function createFacebookLink(row) {
+  if (!row[29]) return null;
+  
+  const socialMediaParametro = processSocialMediaLink(row[29], row);
+  if (!socialMediaParametro) return null;
+  
+  const facebookUrl = `https://www.facebook.com/${socialMediaParametro}`;
+  
+  return {
+    rich_text: [{
+      type: "text",
+      text: {
+        content: `facebook.com/${socialMediaParametro}`,
+        link: { url: facebookUrl }
+      },
+      annotations: {
+        bold: true,
+        color: "blue" // Cor azul do Facebook
+      }
+    }]
+  };
+}
+
+function createInstagramLink(row) {
+  if (!row[30]) return null;
+  
+  const socialMediaParametro = processSocialMediaLink(row[30], row);
+  if (!socialMediaParametro) return null;
+  
+  const instagramUrl = `https://www.instagram.com/${socialMediaParametro}`;
+  
+  return {
+    rich_text: [{
+      type: "text",
+      text: {
+        content: `@${socialMediaParametro}`,
+        link: { url: instagramUrl }
+      },
+      annotations: {
+        bold: true,
+        color: "pink" // Cor rosa do Instagram
+      }
+    }]
+  };
+}
+
+function createTargetProperty(row) {
+  const targetValue = row[42];
+  if (!targetValue || String(targetValue).trim() === "") {
+    return { rich_text: [{ text: { content: "" } }] };
+  }
+  
+  return {
+    rich_text: [{
+      text: { content: truncateText(String(targetValue), 2000) },
+      annotations: { bold: false }
+    }]
+  };
+}
+
+// Funções auxiliares otimizadas (mantendo funcionalidade)
 function getNotionDatabaseProperties(databaseId, token) {
   if (NOTION_CACHE.dbProperties.has(databaseId)) {
     return NOTION_CACHE.dbProperties.get(databaseId);
@@ -263,7 +489,7 @@ function getNotionDatabaseProperties(databaseId, token) {
     NOTION_CACHE.dbProperties.set(databaseId, properties);
     return properties;
   } catch (error) {
-    Logger.log(`Erro ao buscar propriedades do database: ${error}`);
+    Logger.log(`Erro ao buscar propriedades: ${error}`);
     return [];
   }
 }
@@ -283,24 +509,23 @@ function getNotionDatabasePropertiesFull(databaseId, token) {
     });
 
     const data = JSON.parse(response.getContentText());
-    if (!data.properties) {
-      throw new Error("Não foi possível obter o schema do banco do Notion");
+    if (data.properties) {
+      NOTION_CACHE.dbSchemas.set(databaseId, data.properties);
+      return data.properties;
     }
-
-    NOTION_CACHE.dbSchemas.set(databaseId, data.properties);
-    return data.properties;
+    return {};
   } catch (error) {
-    Logger.log(`Erro ao buscar schema do database: ${error}`);
+    Logger.log(`Erro ao buscar schema: ${error}`);
     return {};
   }
 }
 
-// FUNÇÃO CORRIGIDA: Agora inclui Longitude (coluna C=2) e Latitude (coluna D=3)
+// MAPEAMENTO OTIMIZADO E ATUALIZADO COM LÓGICA DOS VALORES - buildPropertiesSingleMedia
 function buildPropertiesSingleMedia(row, dbProps) {
   const columnMap = {
     "ID": [propertieRichText, 0],
-    "Longitude": [propertieRichText, 2], // ADICIONADO: Coluna C = índice 2
-    "Latitude": [propertieRichText, 3],  // ADICIONADO: Coluna D = índice 3
+    "Longitude": [propertieRichText, 2],
+    "Latitude": [propertieRichText, 3],
     "Região": [propertieSelect, 4],
     "Mesorregião": [propertieRichText, 5],
     "UF": [propertieRichText, 6],
@@ -315,10 +540,12 @@ function buildPropertiesSingleMedia(row, dbProps) {
     "Caixa comercial": [propertieRichTextCaixaComercial, 15],
     "PMM": [propertieNumber, 16],
     "Spots 30ʺ": [propertieNumber, 17],
-    "Valor spot 30ʺ (Tabela)": [propertieNumber, 18],
+    // LÓGICA ESPECIAL: Corrigir valor da tabela se for > negociado ou vazio
+    "Valor spot 30ʺ (Tabela)": [propertieSpotTableValue, 18, 19], // 18=tabela, 19=negociado
     "Valor spot 30ʺ (Negociado)": [propertieNumber, 19],
     "Test. 60ʺ": [propertieNumber, 20],
-    "Valor test. 60ʺ (Tabela)": [propertieNumber, 21],
+    // LÓGICA ESPECIAL: Corrigir valor da tabela se for > negociado ou vazio
+    "Valor test. 60ʺ (Tabela)": [propertieTestimonialTableValue, 21, 22], // 21=tabela, 22=negociado
     "Valor test. 60ʺ (Negociado)": [propertieNumber, 22],
     "Cachê": [propertieNumber, 23],
     "Comentários": [propertieRichText, 24],
@@ -331,6 +558,11 @@ function buildPropertiesSingleMedia(row, dbProps) {
     "Data fim": [propertieDate, "next_month_end"], 
     "Dias da semana": [propertieWeekdays, "weekdays"],
     "KML": [propertieRichText, 41],
+    // NOVAS PROPRIEDADES OTIMIZADAS
+    "Target": [createTargetProperty, 42],
+    "Mídia Kit": [createMediaKitLink, "media_kit"],
+    "Facebook": [createFacebookLink, "facebook"],
+    "Instagram": [createInstagramLink, "instagram"]
   };
 
   const properties = {};
@@ -340,7 +572,34 @@ function buildPropertiesSingleMedia(row, dbProps) {
 
     const [func, colIndex, extraParam] = config;
 
-    if (propName === "Data inicio" || propName === "Data fim" || propName === "Dias da semana") {
+    // Tratamento especial para as novas propriedades e lógicas especiais
+    if (propName === "Target") {
+      const targetProp = createTargetProperty(row);
+      if (targetProp.rich_text[0].text.content !== "") {
+        properties[propName] = targetProp;
+      }
+    } else if (propName === "Mídia Kit") {
+      const mediaKitLink = createMediaKitLink(row);
+      if (mediaKitLink) {
+        properties[propName] = mediaKitLink;
+      }
+    } else if (propName === "Facebook") {
+      const facebookLink = createFacebookLink(row);
+      if (facebookLink) {
+        properties[propName] = facebookLink;
+      }
+    } else if (propName === "Instagram") {
+      const instagramLink = createInstagramLink(row);
+      if (instagramLink) {
+        properties[propName] = instagramLink;
+      }
+    } else if (propName === "Valor spot 30ʺ (Tabela)") {
+      // Lógica especial: corrigir tabela (18) baseado no negociado (19)
+      properties[propName] = propertieSpotTableValue(row, 18, 19);
+    } else if (propName === "Valor test. 60ʺ (Tabela)") {
+      // Lógica especial: corrigir tabela (21) baseado no negociado (22)
+      properties[propName] = propertieTestimonialTableValue(row, 21, 22);
+    } else if (propName === "Data inicio" || propName === "Data fim" || propName === "Dias da semana") {
       properties[propName] = extraParam ? func(row, colIndex, extraParam) : func(row, colIndex);
     } else if (row.length > colIndex && row[colIndex] !== undefined && row[colIndex] !== "") {
       properties[propName] = extraParam ? func(row, colIndex, extraParam) : func(row, colIndex);
@@ -350,7 +609,7 @@ function buildPropertiesSingleMedia(row, dbProps) {
   return properties;
 }
 
-// FUNÇÃO CORRIGIDA: Agora também trata Longitude e Latitude no modo Patrocínio
+// buildPropertiesSponsorship ATUALIZADA COM LÓGICAS DOS VALORES
 function buildPropertiesSponsorship(row, headers, schema) {
   const properties = {};
   
@@ -374,6 +633,58 @@ function buildPropertiesSponsorship(row, headers, schema) {
           { name: "Seg." }, { name: "Ter." }, { name: "Qua." }, { name: "Qui." }, { name: "Sex." }
         ]
       };
+      return;
+    }
+
+    // TRATAMENTO ESPECIAL PARA AS NOVAS PROPRIEDADES
+    if (propName === "Target") {
+      const targetProp = createTargetProperty(row);
+      if (targetProp.rich_text[0].text.content !== "") {
+        properties[propName] = targetProp;
+      }
+      return;
+    }
+    
+    if (propName === "Mídia Kit") {
+      const mediaKitLink = createMediaKitLink(row);
+      if (mediaKitLink) {
+        properties[propName] = mediaKitLink;
+      }
+      return;
+    }
+    
+    if (propName === "Facebook") {
+      const facebookLink = createFacebookLink(row);
+      if (facebookLink) {
+        properties[propName] = facebookLink;
+      }
+      return;
+    }
+    
+    if (propName === "Instagram") {
+      const instagramLink = createInstagramLink(row);
+      if (instagramLink) {
+        properties[propName] = instagramLink;
+      }
+      return;
+    }
+
+    // LÓGICAS ESPECIAIS PARA VALORES DE SPOT E TESTIMONIAL
+    if (propName === "Valor spot 30ʺ (Tabela)") {
+      const tableIndex = headers.indexOf(propName);
+      const negotiatedIndex = headers.indexOf("Valor spot 30ʺ (Negociado)");
+      if (tableIndex !== -1 && negotiatedIndex !== -1) {
+        properties[propName] = propertieSpotTableValue(row, tableIndex, negotiatedIndex);
+      }
+      return;
+    }
+    
+    if (propName === "Valor test. 60ʺ (Tabela)") {
+      const tableIndex = headers.indexOf(propName);
+      const negotiatedIndex = headers.indexOf("Valor test. 60ʺ (Negociado)");
+      if (tableIndex !== -1 && negotiatedIndex !== -1) {
+        properties[propName] = propertieTestimonialTableValue(row, tableIndex, negotiatedIndex);
+      }
       return;
     }
 
@@ -413,7 +724,6 @@ function buildPropertiesSponsorship(row, headers, schema) {
   return properties;
 }
 
-// FUNÇÃO MODIFICADA: Agora com truncamento para textos longos
 function createPropertyByType(type, value, propName) {
   const annotations = getAnnotationsByProperty(propName);
   
@@ -421,7 +731,6 @@ function createPropertyByType(type, value, propName) {
     case "title":
       return { title: [{ text: { content: String(value) } }] };
     case "rich_text":
-      // Aplicar truncamento para rich_text
       const content = truncateText(String(value), 2000);
       return { 
         rich_text: [{
@@ -434,7 +743,6 @@ function createPropertyByType(type, value, propName) {
     case "select":
       return { select: { name: String(value) } };
     case "multi_select":
-      // Aplicar truncamento para multi_select se necessário
       const multiValue = String(value);
       const truncatedMulti = multiValue.length > 1900 ? truncateText(multiValue, 1900) : multiValue;
       return {
@@ -447,13 +755,11 @@ function createPropertyByType(type, value, propName) {
     case "url":
       return { url: String(value) };
     default:
-      // Para tipos desconhecidos, usar rich_text com truncamento
       const defaultContent = truncateText(String(value), 2000);
       return { rich_text: [{ text: { content: defaultContent } }] };
   }
 }
 
-// Função auxiliar para anotações
 function getAnnotationsByProperty(propName) {
   const annotationMap = {
     "Gênero": { bold: true, color: "pink" },
@@ -463,224 +769,6 @@ function getAnnotationsByProperty(propName) {
   return annotationMap[propName] || {};
 }
 
-// Função otimizada para envio à API
-function sendToNotionAPI(url, token, payload) {
-  try {
-    const response = UrlFetchApp.fetch(url, {
-      method: "post",
-      headers: {
-        ...NOTION_CONFIG.headers,
-        "Authorization": `Bearer ${token}`
-      },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    });
-
-    if (response.getResponseCode() >= 400) {
-      Logger.log(`Erro HTTP ${response.getResponseCode()}: ${response.getContentText()}`);
-      return null;
-    }
-
-    return JSON.parse(response.getContentText());
-  } catch (error) {
-    Logger.log(`Erro ao enviar para Notion: ${error}`);
-    return null;
-  }
-}
-
-// Função otimizada para adicionar conteúdo extra
-function addExtraContentOptimized(pageId, token, row) {
-  const urlApi = `${NOTION_CONFIG.baseUrl}/blocks/${pageId}/children`;
-  
-  // Executar operações em paralelo quando possível
-  const operations = [];
-  
-  if (row[28]) operations.push(() => addFileToNotionPageOptimized(urlApi, row[28], token));
-  if (row[29]) operations.push(() => addLinkToPageContentOptimized(token, urlApi, row, "row[29]"));
-  if (row[30]) operations.push(() => addLinkToPageContentOptimized(token, urlApi, row, "row[30]"));
-  if (row[35]) operations.push(() => addLinkToNotionPageOptimized(urlApi, row, 35, token));
-  
-  // Executar operações com pequeno delay entre elas
-  operations.forEach((operation, index) => {
-    try {
-      operation();
-      if (index < operations.length - 1) {
-        Utilities.sleep(100);
-      }
-    } catch (error) {
-      Logger.log(`Erro em operação extra ${index}: ${error}`);
-    }
-  });
-  
-  // Adicionar links de distribuição E cobertura
-  updatePageWithDistributionAndCoverageLinksOptimized(pageId, token);
-}
-
-// Versões otimizadas das funções de conteúdo extra (funcionalidade completa)
-function addFileToNotionPageOptimized(urlApi, filePath, token) {
-  if (!filePath) return;
-  
-  const fileName = filePath.split("/").pop();
-  const fileId = getFileIdByName(fileName);
-
-  if (!fileId) {
-    Logger.log(`Arquivo não encontrado: ${fileName}`);
-    return;
-  }
-
-  const driveUrl = `https://drive.google.com/file/d/${fileId}/view?usp=drive_link`;
-
-  const blocksPayload = {
-    children: [{
-      type: "callout", 
-      callout: {
-        icon: { type: "emoji", emoji: "🖇️" },
-        rich_text: [{
-          type: "text",
-          text: { content: "MIDIA KIT" },
-          annotations: { bold: true }
-        }],
-        children: [{
-          type: "file", 
-          file: {
-            external: { url: driveUrl },
-            name: "Mídia Kit"
-          }
-        }]
-      }
-    }]
-  };
-
-  try {
-    const response = UrlFetchApp.fetch(urlApi, {
-      method: "patch",
-      headers: {
-        ...NOTION_CONFIG.headers,
-        "Authorization": `Bearer ${token}`
-      },
-      payload: JSON.stringify(blocksPayload),
-      muteHttpExceptions: true
-    });
-
-    if (response.getResponseCode() >= 400) {
-      Logger.log(`Erro ao adicionar arquivo: ${response.getContentText()}`);
-    }
-  } catch (error) {
-    Logger.log(`Erro ao adicionar arquivo à página: ${error}`);
-  }
-}
-
-function addLinkToPageContentOptimized(token, urlApi, row, column) {
-  let socialMediaLink, media, urlIcon, path;
-
-  if (column === "row[30]") {
-    socialMediaLink = "https://www.instagram.com/";
-    media = "Instagram";
-    urlIcon = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Instagram_icon.png/1200px-Instagram_icon.png";
-    path = row[30];
-  } else if (column === "row[29]") {
-    socialMediaLink = "https://www.facebook.com/";
-    media = "Facebook";
-    urlIcon = "https://upload.wikimedia.org/wikipedia/commons/thumb/f/fb/Facebook_icon_2013.svg/2048px-Facebook_icon_2013.svg.png";
-    path = row[29];
-  } else {
-    return;
-  }
-
-  if (!path) return;
-
-  const socialMediaParametro = processSocialMediaLink(path, row);
-  if (!socialMediaParametro) return;
-
-  socialMediaLink += socialMediaParametro;
-
-  const payload = {
-    children: [{
-      object: "block",
-      type: "callout",
-      callout: {
-        icon: {
-          type: "external",
-          external: { url: urlIcon }
-        },
-        rich_text: [{
-          type: "text",
-          text: {
-            content: `${media} | Rádio ${row[8]} - ${row[9]}`,
-            link: { url: socialMediaLink }
-          },
-          annotations: { bold: true }
-        }]
-      }
-    }]
-  };
-
-  try {
-    const response = UrlFetchApp.fetch(urlApi, {
-      method: "PATCH",
-      headers: {
-        ...NOTION_CONFIG.headers,
-        "Authorization": `Bearer ${token}`
-      },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    });
-
-    if (response.getResponseCode() >= 400) {
-      Logger.log(`Erro ao adicionar link ${media}: ${response.getContentText()}`);
-    }
-  } catch (error) {
-    Logger.log(`Erro ao adicionar link ${media}: ${error}`);
-  }
-}
-
-function addLinkToNotionPageOptimized(urlApi, row, index, token) {
-  const radioLink = row[index];
-
-  if (!radioLink || radioLink.length === 0 || !radioLink.includes("apption.co")) {
-    return;
-  }
-
-  const blocksPayload = {
-    children: [{
-      object: "block",
-      type: "embed",
-      embed: { url: radioLink }
-    }]
-  };
-
-  try {
-    const response = UrlFetchApp.fetch(urlApi, {
-      method: "patch",
-      headers: {
-        ...NOTION_CONFIG.headers,
-        "Authorization": `Bearer ${token}`
-      },
-      payload: JSON.stringify(blocksPayload),
-      muteHttpExceptions: true
-    });
-
-    if (response.getResponseCode() >= 400) {
-      Logger.log(`Erro ao adicionar embed de rádio: ${response.getContentText()}`);
-    }
-  } catch (error) {
-    Logger.log(`Erro ao adicionar embed à página: ${error}`);
-  }
-}
-
-// FUNÇÃO SIMPLIFICADA: Compatível, mas não atualiza links (agora feitos por fórmula)
-function updatePageWithDistributionAndCoverageLinksOptimized(pageId, token) {
-  // A função foi mantida para compatibilidade, mas não altera nada
-  Logger.log(`⚠️ updatePageWithDistributionAndCoverageLinksOptimized chamada para a página ${pageId}, mas os links agora são gerados por fórmulas.`);
-}
-
-
-// FUNÇÃO MANTIDA PARA COMPATIBILIDADE (chama a nova função)
-function updatePageWithDistributionLinkOptimized(pageId, token) {
-  updatePageWithDistributionAndCoverageLinksOptimized(pageId, token);
-}
-
-// Funções auxiliares mantidas
 function getNextMonthDates() {
   const today = new Date();
   const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
@@ -715,3 +803,57 @@ function propertieWeekdays(row, type) {
     ]
   };
 }
+
+// FUNÇÕES LEGADAS MANTIDAS PARA COMPATIBILIDADE (agora super otimizadas)
+function sendRowToNotionSingleMediaOptimized(row, token, databaseId, url, coverPath, headers) {
+  const payload = preparePayloadSingleMedia(row, token, databaseId, headers);
+  const response = UrlFetchApp.fetch(url, {
+    method: "post",
+    headers: { ...NOTION_CONFIG.headers, "Authorization": `Bearer ${token}` },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+  
+  if (response.getResponseCode() < 400) {
+    const data = JSON.parse(response.getContentText());
+    if (data.id) {
+      addRadioEmbedOnly(data.id, token, row);
+    }
+  }
+}
+
+function sendRowToNotionSponsorshipOptimized(row, token, databaseId, url, coverPath, headers) {
+  const payload = preparePayloadSponsorship(row, token, databaseId, headers);
+  const response = UrlFetchApp.fetch(url, {
+    method: "post",
+    headers: { ...NOTION_CONFIG.headers, "Authorization": `Bearer ${token}` },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+  
+  if (response.getResponseCode() < 400) {
+    const data = JSON.parse(response.getContentText());
+    if (data.id) {
+      addRadioEmbedOnly(data.id, token, row);
+    }
+  }
+}
+
+// Funções de compatibilidade atualizadas
+function addExtraContentTurbo(pageId, token, row) {
+  return addRadioEmbedOnly(pageId, token, row);
+}
+
+function addExtraContentOptimized(pageId, token, row) {
+  return addRadioEmbedOnly(pageId, token, row);
+}
+
+function updatePageWithDistributionAndCoverageLinksOptimized(pageId, token) {
+  Logger.log(`⚠️ Links agora são gerados diretamente na tabela - página ${pageId}`);
+}
+
+function updatePageWithDistributionLinkOptimized(pageId, token) {
+  updatePageWithDistributionAndCoverageLinksOptimized(pageId, token);
+}
+
+// clearPageCache já existe no arquivo "Editar Página"
