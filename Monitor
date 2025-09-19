@@ -1,0 +1,328 @@
+// Sistema de monitoramento e métricas de performance
+const MONITOR = {
+  startTime: null,
+  checkpoints: [],
+  errors: [],
+  stats: {
+    recordsProcessed: 0,
+    recordsSuccessful: 0,
+    apiCalls: 0,
+    cacheHits: 0,
+    totalTime: 0
+  }
+};
+
+// Inicializar monitoramento
+function startMonitoring() {
+  MONITOR.startTime = Date.now();
+  MONITOR.checkpoints = [];
+  MONITOR.errors = [];
+  MONITOR.stats = {
+    recordsProcessed: 0,
+    recordsSuccessful: 0,
+    apiCalls: 0,
+    cacheHits: 0,
+    totalTime: 0
+  };
+  
+  Logger.log("📊 Monitoramento iniciado");
+}
+
+// Adicionar checkpoint
+function addCheckpoint(name, details = '') {
+  if (!MONITOR.startTime) {
+    startMonitoring();
+  }
+  
+  const now = Date.now();
+  const checkpoint = {
+    name: name,
+    time: now,
+    elapsed: now - MONITOR.startTime,
+    details: details
+  };
+  
+  MONITOR.checkpoints.push(checkpoint);
+  Logger.log(`⏱️ ${name}: ${checkpoint.elapsed}ms ${details}`);
+}
+
+// Registrar erro
+function logError(context, error) {
+  const errorInfo = {
+    context: context,
+    error: error.toString(),
+    time: Date.now(),
+    elapsed: MONITOR.startTime ? Date.now() - MONITOR.startTime : 0
+  };
+  
+  MONITOR.errors.push(errorInfo);
+  Logger.log(`❌ [${context}] ${error}`);
+}
+
+// Atualizar estatísticas
+function updateStats(stat, increment = 1) {
+  if (MONITOR.stats.hasOwnProperty(stat)) {
+    MONITOR.stats[stat] += increment;
+  }
+}
+
+// Relatório final
+function generateReport() {
+  if (!MONITOR.startTime) {
+    Logger.log("📊 Nenhum monitoramento ativo");
+    return;
+  }
+  
+  const totalTime = Date.now() - MONITOR.startTime;
+  MONITOR.stats.totalTime = totalTime;
+  
+  Logger.log("=== RELATÓRIO DE PERFORMANCE ===");
+  Logger.log(`⏱️ Tempo total: ${(totalTime/1000).toFixed(2)}s`);
+  Logger.log(`📊 Registros processados: ${MONITOR.stats.recordsProcessed}`);
+  Logger.log(`✅ Registros bem-sucedidos: ${MONITOR.stats.recordsSuccessful}`);
+  Logger.log(`📞 Chamadas à API: ${MONITOR.stats.apiCalls}`);
+  Logger.log(`💾 Cache hits: ${MONITOR.stats.cacheHits}`);
+  
+  if (MONITOR.stats.recordsProcessed > 0) {
+    const successRate = (MONITOR.stats.recordsSuccessful / MONITOR.stats.recordsProcessed * 100).toFixed(1);
+    const avgTime = (totalTime / MONITOR.stats.recordsProcessed).toFixed(0);
+    const recordsPerSecond = (MONITOR.stats.recordsProcessed / (totalTime/1000)).toFixed(1);
+    
+    Logger.log(`🎯 Taxa de sucesso: ${successRate}%`);
+    Logger.log(`⚡ Tempo médio por registro: ${avgTime}ms`);
+    Logger.log(`🚀 Registros por segundo: ${recordsPerSecond}`);
+  }
+  
+  if (MONITOR.errors.length > 0) {
+    Logger.log(`❌ Total de erros: ${MONITOR.errors.length}`);
+    Logger.log("--- PRIMEIROS 5 ERROS ---");
+    MONITOR.errors.slice(0, 5).forEach((err, i) => {
+      Logger.log(`${i+1}. [${err.context}] ${err.error} (${err.elapsed}ms)`);
+    });
+  }
+  
+  if (MONITOR.checkpoints.length > 0) {
+    Logger.log("--- CHECKPOINTS PRINCIPAIS ---");
+    MONITOR.checkpoints.slice(-10).forEach(cp => {
+      Logger.log(`${cp.name}: ${cp.elapsed}ms ${cp.details}`);
+    });
+  }
+  
+  Logger.log("===============================");
+}
+
+// Monitoramento em tempo real
+function realtimeStatus() {
+  if (!MONITOR.startTime) {
+    Logger.log("📊 Monitoramento não iniciado");
+    return;
+  }
+  
+  const elapsed = Date.now() - MONITOR.startTime;
+  const currentRate = MONITOR.stats.recordsProcessed > 0 ? 
+    (MONITOR.stats.recordsProcessed / (elapsed/1000)).toFixed(1) : '0';
+  
+  Logger.log(`🔄 Status: ${MONITOR.stats.recordsProcessed} registros | ${(elapsed/1000).toFixed(1)}s | ${currentRate} rec/s`);
+  
+  return {
+    elapsed: elapsed,
+    recordsProcessed: MONITOR.stats.recordsProcessed,
+    recordsPerSecond: parseFloat(currentRate),
+    errors: MONITOR.errors.length
+  };
+}
+
+// Função para monitorar a exportação principal
+function monitoredImport() {
+  try {
+    startMonitoring();
+    addCheckpoint("Início da importação");
+    
+    // Executar função principal
+    importXLSXDataToGoogleSheetsAndExportToNotion();
+    
+    addCheckpoint("Importação concluída");
+    generateReport();
+    
+  } catch (error) {
+    logError("Processo principal", error);
+    generateReport();
+    throw error;
+  }
+}
+
+// Teste de conectividade
+function testConnectivity() {
+  Logger.log("🔌 Testando conectividade...");
+  
+  const tests = [
+    {
+      name: "Google Drive",
+      test: () => DriveApp.getFileById(CONFIG.fileId).getName()
+    },
+    {
+      name: "Google Sheets",
+      test: () => SpreadsheetApp.openById(CONFIG.destinationSheetId).getName()
+    },
+    {
+      name: "Notion API",
+      test: () => {
+        const response = UrlFetchApp.fetch(`https://api.notion.com/v1/users/me`, {
+          method: "get",
+          headers: {
+            "Authorization": `Bearer ${CONFIG.NOTION_TOKEN_1}`,
+            "Notion-Version": "2022-06-28"
+          },
+          muteHttpExceptions: true
+        });
+        return response.getResponseCode() === 200;
+      }
+    }
+  ];
+  
+  let allPassed = true;
+  
+  tests.forEach(test => {
+    try {
+      const result = test.test();
+      Logger.log(`✅ ${test.name}: OK`);
+    } catch (error) {
+      Logger.log(`❌ ${test.name}: ERRO - ${error}`);
+      allPassed = false;
+    }
+  });
+  
+  if (allPassed) {
+    Logger.log("🎯 Todos os testes de conectividade passaram");
+  } else {
+    Logger.log("⚠️ Alguns testes falharam - verifique as configurações");
+  }
+  
+  return allPassed;
+}
+
+// Estimativa de tempo restante
+function estimateTimeRemaining(totalRecords, processedRecords, elapsedTime) {
+  if (processedRecords === 0) return "Calculando...";
+  
+  const recordsRemaining = totalRecords - processedRecords;
+  const avgTimePerRecord = elapsedTime / processedRecords;
+  const estimatedRemaining = recordsRemaining * avgTimePerRecord;
+  
+  const minutes = Math.floor(estimatedRemaining / 60000);
+  const seconds = Math.floor((estimatedRemaining % 60000) / 1000);
+  
+  return `${minutes}m ${seconds}s`;
+}
+
+// Dashboard simples
+function showDashboard() {
+  Logger.log("=== DASHBOARD ===");
+  
+  if (processedValues) {
+    Logger.log(`📊 Dados carregados: ${processedValues.length - 1} registros`);
+    
+    if (MONITOR.startTime) {
+      const status = realtimeStatus();
+      const totalRecords = processedValues.length - 1;
+      const remaining = estimateTimeRemaining(totalRecords, status.recordsProcessed, status.elapsed);
+      
+      Logger.log(`⏱️ Tempo decorrido: ${(status.elapsed/1000).toFixed(1)}s`);
+      Logger.log(`📈 Progresso: ${status.recordsProcessed}/${totalRecords} (${((status.recordsProcessed/totalRecords)*100).toFixed(1)}%)`);
+      Logger.log(`🚀 Velocidade: ${status.recordsPerSecond} registros/segundo`);
+      Logger.log(`⏰ Tempo estimado restante: ${remaining}`);
+      Logger.log(`❌ Erros: ${status.errors}`);
+    }
+  } else {
+    Logger.log("📊 Nenhum dado carregado ainda");
+  }
+  
+  // Status do cache
+  const cacheStatus = {
+    fileIds: CACHE.fileIds.size,
+    processedUrls: CACHE.processedUrls.size,
+    dbProperties: NOTION_CACHE.dbProperties.size,
+    dbSchemas: NOTION_CACHE.dbSchemas.size
+  };
+  
+  Logger.log(`💾 Status do cache:`);
+  Object.entries(cacheStatus).forEach(([key, value]) => {
+    Logger.log(`   ${key}: ${value} entradas`);
+  });
+  
+  Logger.log("================");
+}
+
+// Função para limpar logs antigos (opcional)
+function clearLogs() {
+  console.clear();
+  Logger.log("🧹 Logs limpos");
+}
+
+// Benchmark comparativo
+function benchmarkOperations() {
+  Logger.log("🏃‍♂️ Iniciando benchmark...");
+  
+  const operations = [
+    {
+      name: "Criação de 100 URLs de imagem",
+      fn: () => {
+        const testRow = ['test', '1', '2', '3', '4', '5', '6', '7', 'TestRadio', '100.1', 'Rock', 'M', 'A', '25-44', '1000', '30', '500'];
+        for (let i = 0; i < 100; i++) {
+          createImage(testRow, 16);
+        }
+      }
+    },
+    {
+      name: "Processamento de 100 textos",
+      fn: () => {
+        for (let i = 0; i < 100; i++) {
+          const text = `Texto de teste número ${i} com conteúdo extenso para verificar performance`;
+          removeEspacosExtras(text);
+          truncateText(text, 50);
+        }
+      }
+    },
+    {
+      name: "100 operações de cache",
+      fn: () => {
+        for (let i = 0; i < 100; i++) {
+          CACHE.processedUrls.set(`test-${i}`, `value-${i}`);
+          CACHE.processedUrls.get(`test-${i}`);
+        }
+      }
+    }
+  ];
+  
+  operations.forEach(op => {
+    const start = Date.now();
+    try {
+      op.fn();
+      const time = Date.now() - start;
+      Logger.log(`⚡ ${op.name}: ${time}ms`);
+    } catch (error) {
+      Logger.log(`❌ ${op.name}: ERRO`);
+    }
+  });
+  
+  Logger.log("🏁 Benchmark concluído");
+}
+
+// Função para parar monitoramento de emergência
+function emergencyStop() {
+  Logger.log("🛑 PARADA DE EMERGÊNCIA ACIONADA");
+  
+  if (MONITOR.startTime) {
+    generateReport();
+  }
+  
+  // Limpar operações pendentes (se possível)
+  try {
+    clearProcessCacheTurbo();
+    Logger.log("🧹 Cache limpo");
+  } catch (error) {
+    Logger.log(`⚠️ Erro ao limpar cache: ${error}`);
+  }
+  
+  Logger.log("🛑 Sistema parado");
+}
