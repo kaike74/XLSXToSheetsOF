@@ -558,8 +558,9 @@ function buildPropertiesSingleMedia(row, dbProps) {
     "Data fim": [propertieDate, "next_month_end"], 
     "Dias da semana": [propertieWeekdays, "weekdays"],
     "KML": [propertieRichText, 41],
-    // NOVAS PROPRIEDADES OTIMIZADAS
     "Target": [createTargetProperty, 42],
+    "KML2": [propertieRichText, 43],
+    "KMZ2": [propertieRichText, 44],
     "Mídia Kit": [createMediaKitLink, "media_kit"],
     "Facebook": [createFacebookLink, "facebook"],
     "Instagram": [createInstagramLink, "instagram"]
